@@ -90,7 +90,7 @@
 
   async function colorize(src, levelsN) {
     // PNG จากกรมชลฯ เป็นภาพเทา ค่าพิกเซล k = ระดับฝน (1..6), 0 = ไม่มีฝน
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+    const img = await new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = rej; i.src = src; });
     const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
@@ -155,22 +155,33 @@
   }
 
   // ---- แหล่ง th ----
-  async function loadTh(st) {
+  // ดึงสดผ่าน Cloudflare Worker (ทางผ่าน https ไปยังเซิร์ฟเวอร์ระบบสมดุลน้ำ ดู worker/rid-proxy.js)
+  // ถ้า Worker หรือต้นทางล่ม ใช้สำเนาที่ GitHub Actions ดึงมาเก็บไว้ใน data/ (ช้ากว่าได้ถึงประมาณ 1 ชม.)
+  const RID_LIVE = 'https://rid-proxy.bogusung.workers.dev/';
+  async function thIndex() {
+    try {
+      const r = await fetch(RID_LIVE + 'obs/radar/index.json?t=' + Date.now(), { signal: AbortSignal.timeout(15000) });
+      if (r.ok) { const j = await r.json(); if (j.frames && j.frames.length) return { idx: j, base: RID_LIVE }; }
+    } catch (e) { /* ใช้สำเนาแทน */ }
     const res = await fetch('data/radar/index.json?t=' + Date.now());
     if (!res.ok) throw new Error('แหล่งเรดาร์ไทยล่มหรือยังไม่มีข้อมูล ลองใช้ "ทั้งภูมิภาค"');
-    const idx = await res.json();
+    return { idx: await res.json(), base: 'data/' };
+  }
+  async function loadTh(st) {
+    const { idx, base } = await thIndex();
+    st.thBase = base;
     st.frames = [...idx.frames, ...idx.nowcast];
     st.obsLast = idx.frames.length - 1;
     st.bounds = cornersToBounds(idx.corners);
     st.latest = idx.latest; st.levels = idx.levels; st.cur = st.obsLast;
     st.urls = new Array(st.frames.length).fill(null);
     if (isActive(st)) { nowHeader(); nowLegend(); }
-    st.urls[st.cur] = await colorize('data/' + st.frames[st.cur].file, idx.levels.length);
+    st.urls[st.cur] = await colorize(base + st.frames[st.cur].file, idx.levels.length);
     st.ready = true;
     if (isActive(st)) nowRender();
     const order = [];
     for (let k = 1; k < st.frames.length; k++) { if (st.obsLast + k < st.frames.length) order.push(st.obsLast + k); if (st.obsLast - k >= 0) order.push(st.obsLast - k); }
-    for (const i of order) { st.urls[i] = await colorize('data/' + st.frames[i].file, idx.levels.length); if (isActive(st) && i === st.cur) nowRender(); }
+    for (const i of order) { st.urls[i] = await colorize(base + st.frames[i].file, idx.levels.length); if (isActive(st) && i === st.cur) nowRender(); }
   }
 
   // ---- แหล่ง region ----
