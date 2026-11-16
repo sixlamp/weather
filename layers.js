@@ -168,15 +168,18 @@ window.RainLayers = (() => {
     let data = null, on = false, raf = null, last = 0, fw = 0, fh = 0, FX = null, FY = null, parts = [], color = 'rgba(25,45,85,0.85)';
 
     function spawn(p) { p.x = Math.random() * cv.width; p.y = Math.random() * cv.height; p.age = Math.floor(Math.random() * MAX_AGE); return p; }
-    function build() {
-      const s = map.getSize(); cv.width = s.x; cv.height = s.y;
-      fw = Math.ceil(s.x / CELL) + 1; fh = Math.ceil(s.y / CELL) + 1;
-      FX = new Float32Array(fw * fh); FY = new Float32Array(fw * fh);
+    function field() {
       for (let j = 0; j < fh; j++) for (let i = 0; i < fw; i++) {
         const ll = map.containerPointToLatLng([i * CELL, j * CELL]);
         const u = sampleGrid(data.g, data.u, ll.lat, ll.lng), v = sampleGrid(data.g, data.v, ll.lat, ll.lng);
         FX[j * fw + i] = u * PX_PER_MS; FY[j * fw + i] = -v * PX_PER_MS;      // v บวก = ไปทางเหนือ = ขึ้นบนจอ
       }
+    }
+    function build() {
+      const s = map.getSize(); cv.width = s.x; cv.height = s.y;
+      fw = Math.ceil(s.x / CELL) + 1; fh = Math.ceil(s.y / CELL) + 1;
+      FX = new Float32Array(fw * fh); FY = new Float32Array(fw * fh);
+      field();
       const n = Math.min(2200, Math.round((s.x * s.y) / 380));
       parts = []; for (let i = 0; i < n; i++) parts.push(spawn({}));
     }
@@ -202,7 +205,9 @@ window.RainLayers = (() => {
     document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else start(); });
     return {
       setData(d) { data = d; if (on) start(); },
-      show(v) { on = v; cv.style.display = v ? 'block' : 'none'; if (v) start(); else stop(); },
+      // เปลี่ยนสนามลมโดยไม่เริ่มเส้นใหม่ (ใช้ตอนเล่นต่อเนื่องทีละช่วงเวลา)
+      update(d) { data = d; if (on && raf && FX) field(); else if (on) start(); },
+      show(v) { if (v && on && raf) return; on = v; cv.style.display = v ? 'block' : 'none'; if (v) start(); else stop(); },   // เปิดอยู่แล้ว ไม่ต้องเริ่มเส้นใหม่
       setDark(dark) { color = dark ? 'rgba(255,255,255,0.85)' : 'rgba(25,45,85,0.85)'; },
     };
   }

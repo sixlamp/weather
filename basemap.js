@@ -21,7 +21,7 @@ window.RainBase = (map) => {
     const el = m.getElement(); if (!el) return;
     const tv = el.querySelector('.tv'); if (!tv) return;
     const v = tempFn ? tempFn(m.getLatLng().lat, m.getLatLng().lng) : null;
-    tv.textContent = v === null || v === undefined || v !== v ? '' : ` ${Math.round(v)}°`;
+    tv.textContent = typeof v === 'string' ? ` ${v}` : v === null || v === undefined || v !== v ? '' : ` ${Math.round(v)}°`;   // ข้อความ เช่น "24/36°" ใช้ตามนั้น
   }
 
   const ll = (ring) => ring.map((p) => [p[1], p[0]]);
@@ -79,7 +79,7 @@ window.RainBase = (map) => {
   fetch('basemap.json').then((r) => r.json()).then(build).catch(() => { /* ไม่มีไฟล์ก็ยังใช้แผนที่ฐานแบบ tile ได้ */ });
 
   return {
-    // fn(lat, lon) -> องศาเซลเซียส หรือ null; ส่ง null เพื่อซ่อนตัวเลข
+    // fn(lat, lon) -> องศาเซลเซียส ข้อความ หรือ null; ส่ง null เพื่อซ่อนตัวเลข
     setTemps(fn) { tempFn = fn; tempLabels.forEach(fillTemp); },
     base, top,
     setDark(v) {

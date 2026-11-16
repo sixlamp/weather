@@ -16,7 +16,7 @@
 <header class="top">
   <div class="tabs" role="tablist">
     <button class="tab active" data-page="now" role="tab">อากาศตอนนี้</button>
-    <button class="tab" data-page="fc" role="tab">อากาศคาดการณ์ 15 วัน</button>
+    <button class="tab" data-page="fc" role="tab">อากาศคาดการณ์ 7 วัน</button>
   </div>
   <div class="note" id="note">แหล่งที่มา: กำลังโหลด</div>
 </header>
@@ -56,12 +56,9 @@
 <section id="page-fc" class="page">
   <div class="ctrl">
     <div class="row">
-      <div class="seg" id="fcWin">
-        <button data-w="1">1 วัน</button>
-        <button data-w="3" class="active">3 วัน</button>
-        <button data-w="7">7 วัน</button>
-        <button data-w="15">15 วัน</button>
-      </div>
+      <button id="fcPrev" class="btn" title="ก่อนหน้า">&#9664;</button>
+      <button id="fcPlay" class="btn play" title="เล่น">&#9654;</button>
+      <button id="fcNext" class="btn" title="ถัดไป">&#9654;</button>
       <div class="when">
         <div id="fcTime" class="big">--</div>
         <div id="fcKind" class="small">กำลังโหลด</div>
@@ -74,15 +71,11 @@
         <button data-l="wind">ลม</button>
         <button data-l="pres">ความกดอากาศ</button>
       </div>
-      <div class="seg seg-sm" id="tempMode" hidden>
-        <button data-m="min" class="active">ต่ำสุด เช้า</button>
-        <button data-m="max">สูงสุด บ่าย</button>
-      </div>
     </div>
     <div class="slider-wrap">
-      <div class="slider-lbl"><span>วันเริ่ม</span><span id="fcTotal" class="fc"></span></div>
-      <input id="fcSlider" type="range" min="0" max="14" value="0" step="1">
-      <div id="fcTicks" class="ticks"></div>
+      <div class="slider-lbl"><span>ทุก 3 ชม.</span><span id="fcTotal" class="fc"></span></div>
+      <input id="fcSlider" type="range" min="0" max="55" value="0" step="1">
+      <div id="fcTicks" class="ticks days"></div>
     </div>
   </div>
 </section>

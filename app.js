@@ -1,4 +1,4 @@
-/* RainMap: แผนที่ฝนตอนนี้ (เรดาร์ + nowcast 2 ชม.) และฝนคาดการณ์ 1/3/7/15 วัน
+/* RainMap: แผนที่ฝนตอนนี้ (เรดาร์ + nowcast 2 ชม.) และพยากรณ์ 7 วัน ทุก 3 ชม.
    เรดาร์ภูมิภาคโหลดตรงจาก RainViewer (nowcast.js) ส่วนเรดาร์ไทยและ forecast อ่านจาก data/ ที่ fetch.py ดึงมาไว้ */
 (() => {
   'use strict';
@@ -294,23 +294,23 @@
     } else if (page === 'fc' && fc.data) {
       const g = fc.grid, r = Math.round((ll.lat - g.lat0) / g.dlat), c = Math.round((ll.lng - g.lon0) / g.dlon);
       if (r < 0 || c < 0 || r >= g.ny || c >= g.nx) return h + '<br>อยู่นอกกรอบข้อมูลพยากรณ์';
-      let t = 0;
-      for (let d = fc.start; d < Math.min(g.days, fc.start + fc.win); d++) { const v = fc.data[d * g.nx * g.ny + r * g.nx + c]; if (v !== g.nodata) t += v * g.scale; }
-      h += `<br>ฝนสะสม ${fc.win} วัน (เริ่ม ${fmtDate(fc.days[fc.start])}): <b>${t.toFixed(1)} มม.</b>`;
-      if (fc.temp) {
-        let lo = null, hi = null;
-        const k1 = Math.min(fc.grid.days, fc.start + fc.win) - 1;
-        for (let k = fc.start; k <= k1; k++) {
-          const a = tempAt(k, 0, ll.lat, ll.lng), b = tempAt(k, 1, ll.lat, ll.lng);
-          if (a !== null && (lo === null || a < lo)) lo = a;
-          if (b !== null && (hi === null || b > hi)) hi = b;
-        }
-        const span = k1 > fc.start ? `${fmtDate(tempDate(fc.start))} - ${fmtDate(tempDate(k1))}` : fmtDate(tempDate(fc.start));
-        if (lo !== null || hi !== null) h += `<br>อุณหภูมิ ${span}: ต่ำสุด <b>${lo === null ? '-' : lo.toFixed(0)}</b> สูงสุด <b>${hi === null ? '-' : hi.toFixed(0)}</b> °C`;
+      const n = g.nx * g.ny, cell = r * g.nx + c, T = fcT(fc.s), day = thDate(T);
+      const v = RAIN_LUT[fc.data[fc.s * n + cell]];
+      h += `<br>ฝน ${fmtTime(fcIso(fc.s - 1))}-${fmtTime(fcIso(fc.s))}: <b>${v >= 0.1 ? v.toFixed(1) + ' มม.' : 'ไม่มีฝน'}</b>`;
+      let tot = 0, cnt = 0;
+      for (let k = 0; k < fc.n; k++) {
+        if (thDate(fcT(k) - fc.stepMs / 2) !== day) continue;
+        const x = RAIN_LUT[fc.data[k * n + cell]]; if (x === x) tot += x; cnt++;
+      }
+      h += `<br>ฝนรวมทั้งวัน ${fmtDate(new Date(T))}: <b>${tot.toFixed(1)} มม.</b>${cnt < 24 / fc.meta.steps.stepHours ? ' (เท่าที่มีข้อมูล)' : ''}`;
+      const k = tempDay(fc.s);
+      if (k >= 0) {
+        const lo = tempAt(k, 0, ll.lat, ll.lng), hi = tempAt(k, 1, ll.lat, ll.lng);
+        if (lo !== null || hi !== null) h += `<br>อุณหภูมิวันนั้น: ต่ำสุด <b>${lo === null ? '-' : lo.toFixed(0)}</b> สูงสุด <b>${hi === null ? '-' : hi.toFixed(0)}</b> °C`;
       }
       if (fc.wx) {
-        const d = wxAt(fc.start), u = RL.sampleGrid(d.g, d.u, ll.lat, ll.lng), v = RL.sampleGrid(d.g, d.v, ll.lat, ll.lng), pp = RL.sampleGrid(d.g, d.p, ll.lat, ll.lng);
-        if (u === u) h += `<br>ลม ${(Math.hypot(u, v) * 3.6).toFixed(0)} กม./ชม. จากทิศ${RL.windFrom(u, v)} | ${pp.toFixed(0)} hPa<br><span class="small">ณ ${fmtDateTime(fc.meta.dayStarts[fc.start])}</span>`;
+        const d = wxAt(fc.s + 1), u = RL.sampleGrid(d.g, d.u, ll.lat, ll.lng), v2 = RL.sampleGrid(d.g, d.v, ll.lat, ll.lng), pp = RL.sampleGrid(d.g, d.p, ll.lat, ll.lng);
+        if (u === u) h += `<br>ลม ${(Math.hypot(u, v2) * 3.6).toFixed(0)} กม./ชม. จากทิศ${RL.windFrom(u, v2)} | ${pp.toFixed(0)} hPa<br><span class="small">ณ ${fmtDateTime(fcIso(fc.s))}</span>`;
       }
     }
     if (page === 'now' && fc.wnow && fc.wx) {
@@ -365,8 +365,16 @@
   });
   map.addControl(new LocControl());
 
-  // ---------- หน้า ฝนคาดการณ์ ----------
-  const fc = { meta: null, grid: null, data: null, win: 3, start: 0, cache: new Map(), bounds: null, days: [] };
+  // ---------- หน้า พยากรณ์ 7 วัน ทุก 3 ชม. ----------
+  // ตำแหน่ง s บนแถบเลื่อน = เวลา T = init + 3(s+1) ชม.: ฝนใน 3 ชม. ก่อนถึง T, ลม/ความกดอากาศ ณ T (ข้อมูลเวลาที่ s+1)
+  const fc = { meta: null, grid: null, data: null, s: 0, n: 0, stepMs: 3 * 3600e3, t0: 0, cache: new Map(), bounds: null, timer: null, picked: false, tempKey: '' };
+  const RAIN_LUT = new Float32Array(256);
+  for (let v = 0; v < 256; v++) RAIN_LUT[v] = v === 255 ? NaN : v <= 200 ? v / 10 : 20 + (v - 200) * 2;
+  const fcT = (s) => fc.t0 + (s + 1) * fc.stepMs;
+  const fcIso = (s) => new Date(fcT(s)).toISOString();
+  const thDate = (ms) => new Date(ms + 7 * 3600e3).toISOString().slice(0, 10);       // วันที่ตามเวลาไทย
+  const WD = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+  const fcHome = () => Math.max(0, Math.min(fc.n - 1, Math.ceil((Date.now() - fc.t0) / fc.stepMs) - 1));   // ช่วงแรกที่ยังไม่ผ่าน
   const merc = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
   const unmerc = (y) => (Math.atan(Math.exp(y)) * 360) / Math.PI - 90;
 
@@ -380,18 +388,14 @@
     return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 70 + 135 * Math.min(1, (i + t) / 3)];
   }
 
-  function fcImage(win, start) {
-    const key = win + ':' + start;
-    if (fc.cache.has(key)) return fc.cache.get(key);
-    const g = fc.grid, nx = g.nx, ny = g.ny, nd = g.days, lv = fc.meta.levels.acc;
+  function fcImage(s) {
+    if (fc.cache.has(s)) return fc.cache.get(s);
+    const g = fc.grid, nx = g.nx, ny = g.ny, lv = fc.meta.levels.step, off = s * nx * ny;
     const acc = new Float32Array(nx * ny);
-    for (let d = start; d < Math.min(nd, start + win); d++) {
-      const off = d * nx * ny;
-      for (let i = 0; i < nx * ny; i++) { const v = fc.data[off + i]; if (v !== g.nodata) acc[i] += v * g.scale; }
-    }
+    for (let i = 0; i < nx * ny; i++) { const v = RAIN_LUT[fc.data[off + i]]; acc[i] = v === v ? v : 0; }
     // วาดด้วย bilinear interpolation ระหว่างจุดกริด 0.25 องศา (ค่าระหว่างจุดเป็นค่าประมาณ)
     const S = g.lat0 - g.dlat / 2, N = g.lat0 + (ny - 1) * g.dlat + g.dlat / 2, Wl = g.lon0 - g.dlon / 2;
-    const PX = nx > 60 ? 8 : 16, W = nx * PX, H = ny * PX;   // กริดภูมิภาคใหญ่ ใช้พิกเซลต่อช่องน้อยลง
+    const PX = 6, W = nx * PX, H = ny * PX;
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H), px = im.data;
     const yN = merc(N), yS = merc(S);
@@ -414,7 +418,7 @@
     }
     ctx.putImageData(im, 0, 0);
     const url = cv.toDataURL('image/png');
-    fc.cache.set(key, url);
+    fc.cache.set(s, url);
     return url;
   }
 
@@ -430,8 +434,6 @@
     return TEMP_STOPS[TEMP_STOPS.length - 1][1];
   }
   const TEMP_LV = [8, 14, 18, 22, 26, 29, 32, 35];
-  const tempOn = () => page === 'fc' && layersOn.temp;
-  const tempWhich = () => (layersOn.tempMode === 'max' ? 1 : 0);
   let tempLoading = null;
   function loadTemp() {
     if (fc.temp || !fc.meta || !fc.meta.temp) return Promise.resolve();
@@ -447,7 +449,7 @@
     const v = fc.temp.data[(k * 2 + which) * g.nx * g.ny + r * g.nx + c];
     return v === 255 ? null : v / 2 - 40;
   }
-  const tempDate = (k) => new Date(fc.temp.meta.dates[k] + 'T12:00:00+07:00');
+  const tempDay = (s) => (fc.temp ? fc.temp.meta.dates.indexOf(thDate(fcT(s))) : -1);   // วันของเวลา T ในไฟล์อุณหภูมิ
   // วาดสนามอุณหภูมิ (Float32Array องศาเซลเซียส ขนาด ny x nx, NaN = ไม่มีข้อมูล) เป็นภาพ
   function tempField(vals) {
     const g = fc.grid, nx = g.nx, ny = g.ny;
@@ -475,64 +477,24 @@
     ctx.putImageData(im, 0, 0);
     return cv.toDataURL('image/png');
   }
-  // ต่ำสุด (which 0) = ค่าต่ำสุดในช่วง win วัน, สูงสุด (which 1) = ค่าสูงสุดในช่วง
-  function tempWindow(start, win, which) {
-    const g = fc.grid, n = g.nx * g.ny, d = fc.temp.data, out = new Float32Array(n).fill(NaN);
-    for (let k = start; k < Math.min(g.days, start + win); k++) {
-      const off = (k * 2 + which) * n;
-      for (let i = 0; i < n; i++) {
-        const v = d[off + i]; if (v === 255) continue;
-        const c = v / 2 - 40, o = out[i];
-        if (o !== o || (which ? c > o : c < o)) out[i] = c;
-      }
-    }
-    return out;
-  }
-  const tempHave = (start, win, which) => fc.temp.meta.have.slice(start, start + win).some((h) => h[which]);
-  function tempImage(start, win, which) {
-    const key = start + ':' + win + ':' + which;
-    if (!fc.temp.cache.has(key)) fc.temp.cache.set(key, tempField(tempWindow(start, win, which)));
-    return fc.temp.cache.get(key);
-  }
-
   function fcRender() {
-    if (page !== 'fc') return;
-    const tOn = layersOn.temp && fc.meta.temp, win = fc.win;
-    const nd = fc.grid.days, maxStart = Math.max(0, nd - win);
-    fc.start = Math.min(fc.start, maxStart);
-    const sl = $('fcSlider'); sl.max = maxStart; sl.value = fc.start;
-    const d0 = fc.days[fc.start], d1 = fc.days[Math.min(nd - 1, fc.start + win - 1)];
-    $('fcTime').textContent = win === 1 ? fmtDate(d0) : `${fmtDate(d0)} - ${fmtDate(d1)}`;
-    const wxOn = fc.wx && (layersOn.wind || layersOn.pres);
-    const which = tempWhich();
-    let field = `ฝนสะสม ${fc.win} วัน`;
-    if (tOn) {
-      field = (which ? 'อุณหภูมิสูงสุด (ช่วงบ่าย)' : 'อุณหภูมิต่ำสุด (ช่วงเช้ามืด)') + (win > 1 ? ` ที่จะเจอในช่วง ${win} วัน` : '');
-      if (!fc.temp) field += ' (กำลังโหลด)';
-      else if (!tempHave(fc.start, win, which)) field += ' (ไม่มีข้อมูล ช่วงเวลานี้ผ่านไปแล้ว)';
-    }
-    $('fcKind').textContent = `${field} | ${fc.meta.source.toUpperCase()} รอบ ${fmtDateTime(fc.meta.init)}`
-      + (wxOn ? ` | ${[layersOn.wind && 'ลม', layersOn.pres && 'ความกดอากาศ'].filter(Boolean).join(' + ')} ณ ${fmtDateTime(fc.meta.dayStarts[fc.start])}` : '');
-    document.querySelectorAll('#fcWin button').forEach((b) => { b.classList.toggle('active', +b.dataset.w === fc.win); });
-    $('tempMode').hidden = !tOn;
-    document.querySelectorAll('#tempMode button').forEach((b) => b.classList.toggle('active', (b.dataset.m === 'max') === !!which));
-    if (tOn) {
-      if (!fc.temp) { showImage(TRANSPARENT, fc.bounds, 1); loadTemp().then(() => { if (fc.temp) fcShow(); }); }
-      else showImage(tempHave(fc.start, win, which) ? tempImage(fc.start, win, which) : TRANSPARENT, fc.bounds, 1);
-    } else showImage(fcImage(fc.win, fc.start), fc.bounds, 1);
+    if (page !== 'fc' || !fc.data) return;
+    const s = fc.s, sl = $('fcSlider');
+    sl.max = fc.n - 1; sl.value = s;
+    $('fcTime').textContent = new Date(fcT(s)).toLocaleString('th-TH', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    $('fcKind').textContent = `ฝนช่วง ${fmtTime(fcIso(s - 1))}-${fmtTime(fcIso(s))} | ${fc.meta.source.toUpperCase()} รอบ ${fmtDateTime(fc.meta.init)}`;
+    showImage(fcImage(s), fc.bounds, 1);
     applyLayers();
-    cityTemps();
     credits();
   }
 
   async function loadFc() {
-    fc.meta = await (await fetch('data/forecast/meta.json?t=' + Date.now())).json();
-    fc.grid = fc.meta.grid;
-    const buf = await (await fetch('data/forecast/daily.bin?t=' + Date.now())).arrayBuffer();
-    const dv = new DataView(buf), n = buf.byteLength / 2, arr = new Uint16Array(n);
-    for (let i = 0; i < n; i++) arr[i] = dv.getUint16(i * 2, true);
-    fc.data = arr;
-    fc.days = fc.meta.dayStarts.map((s) => new Date(new Date(s).getTime() + 7 * 3600e3)); // วันตามเวลาไทย
+    const meta = await (await fetch('data/forecast/meta.json?t=' + Date.now())).json();
+    if (!meta.steps) throw new Error('ข้อมูลพยากรณ์ยังเป็นรูปแบบเก่า รอรอบอัปเดตถัดไป');
+    const buf = await (await fetch('data/forecast/' + meta.grid.file + '?t=' + Date.now())).arrayBuffer();
+    fc.meta = meta; fc.grid = meta.grid; fc.data = new Uint8Array(buf);
+    fc.n = meta.steps.count; fc.stepMs = meta.steps.stepHours * 3600e3; fc.t0 = Date.parse(meta.steps.start);
+    fc.cache.clear(); fc.temp = null; tempLoading = null;
     fc.bounds = cornersToBounds(fc.meta.corners);
     if (fc.meta.wx) {
       try {
@@ -542,26 +504,54 @@
         fc.wx = { g: { lat0: w.lat0, lon0: w.lon0, dlat: w.dlat, dlon: w.dlon, nx: w.nx, ny: w.ny }, wind: new Int8Array(wb), pres, scale: w.wind.scale, offsetPa: w.pres.offsetPa, cache: {} };
       } catch (e) { fc.wx = null; }
     }
-    const nd = fc.grid.days;
-    $('fcTicks').innerHTML = `<b>วันนี้</b><span>${fmtDate(fc.days[Math.floor(nd / 2)])}</span><span>${fmtDate(fc.days[nd - 1])}</span>`;
-    $('fcTotal').textContent = `${fmtDate(fc.days[0])} ถึง ${fmtDate(fc.days[nd - 1])}`;
+    if (!fc.picked) fc.s = fcHome();
+    fc.s = Math.min(fc.s, fc.n - 1);
+    fcTicks();
+    $('fcTotal').textContent = `${fmtDate(new Date(fcT(0)))} ถึง ${fmtDate(new Date(fcT(fc.n - 1)))}`;
+  }
+  // ชื่อวันใต้แถบเลื่อน วางกลางช่วงของวันนั้น พร้อมขีดที่เที่ยงคืน
+  function fcTicks() {
+    const pos = (ms) => (((ms - fc.t0) / fc.stepMs - 1) / (fc.n - 1)) * 100, today = thDate(Date.now()), end = fcT(fc.n - 1);
+    let h = '';
+    for (let d = Date.parse(thDate(fcT(0)) + 'T00:00:00+07:00'); d < end; d += 864e5) {
+      const p0 = pos(d), p1 = pos(d + 864e5);
+      if (p0 > 0) h += `<i style="left:${p0.toFixed(2)}%"></i>`;
+      const a = Math.max(0, p0), b = Math.min(100, p1);
+      if (b - a < 7) continue;                     // วันที่เหลือช่วงสั้นเกินไป ไม่ต้องใส่ชื่อ
+      const ds = thDate(d + 12 * 3600e3), isToday = ds === today;
+      const lbl = isToday ? 'วันนี้' : `${WD[new Date(d + 12 * 3600e3 + 7 * 3600e3).getUTCDay()]} ${+ds.slice(8)}`;
+      h += `<span${isToday ? ' class="today"' : ''} style="left:${((a + b) / 2).toFixed(2)}%">${lbl}</span>`;
+    }
+    $('fcTicks').innerHTML = h;
   }
   function fcShow() {
-    const note = 'ไล่สีระหว่างจุดกริด 0.25 องศา (ค่าประมาณ)' + (fc.wx && layersOn.pres ? '<br>เส้นความกดอากาศ: <b style="color:#2f6bff">น้ำเงินเข้ม</b> = สูง อากาศเย็นแผ่ลงมา | <b style="color:#e0662a">ส้มแดง</b> = ต่ำ' : '');
-    if (layersOn.temp && fc.meta.temp) {
-      const tnote = 'GFS ละเอียด 27 กม. บนดอยและในหุบเขาอาจคลาดได้หลายองศา' + (fc.wx && layersOn.pres ? '<br>เส้นความกดอากาศ: <b style="color:#2f6bff">น้ำเงินเข้ม</b> = สูง | <b style="color:#e0662a">ส้มแดง</b> = ต่ำ' : '');
-      const span = fc.win > 1 ? ` ใน ${fc.win} วัน` : '';
-      legend((tempWhich() ? 'อุณหภูมิสูงสุด' : 'อุณหภูมิต่ำสุด') + span + ' (°C)', TEMP_LV, TEMP_LV.map(tempRGB), '', tnote);
-    } else legend('ฝนสะสม (มม.)', fc.meta.levels.acc, ACC_COLORS, '', note);
+    const note = 'ฝนที่ตกในช่วง 3 ชม. ก่อนถึงเวลาที่เลือก | ไล่สีระหว่างจุดกริด 0.25 องศา (ค่าประมาณ)' + (fc.wx && layersOn.pres ? '<br>เส้นความกดอากาศ: <b style="color:#2f6bff">น้ำเงินเข้ม</b> = สูง อากาศเย็นแผ่ลงมา | <b style="color:#e0662a">ส้มแดง</b> = ต่ำ' : '')
+      + (layersOn.temp ? '<br>ตัวเลขข้างชื่อเมือง: อุณหภูมิต่ำสุด/สูงสุดของวันนั้น (°C)' : '');
+    legend('ฝนใน 3 ชม. (มม.)', fc.meta.levels.step, ACC_COLORS, '', note);
+    if (layersOn.temp && !fc.temp) loadTemp().then(() => { if (page === 'fc') cityTemps(); });
     fcRender();
   }
 
-  document.querySelectorAll('#fcWin button').forEach((b) => { b.onclick = () => { fc.win = +b.dataset.w; if (layersOn.temp) fcShow(); else fcRender(); }; });
-  $('fcSlider').oninput = (e) => { fc.start = +e.target.value; fcRender(); };
+  function fcStep(d) {
+    fc.picked = true;
+    fc.s = Math.max(0, Math.min(fc.n - 1, fc.s + d));
+    fcRender();
+  }
+  function fcPlay(on) {
+    if (fc.timer) { clearInterval(fc.timer); fc.timer = null; $('fcPlay').innerHTML = '&#9654;'; }
+    if (on && fc.data) {
+      fc.timer = setInterval(() => { fc.picked = true; fc.s = fc.s + 1 >= fc.n ? fcHome() : fc.s + 1; fcRender(); }, 500);   // จบแล้ววนกลับมาที่ตอนนี้
+      $('fcPlay').innerHTML = '&#10074;&#10074;';
+    }
+  }
+  $('fcPrev').onclick = () => { fcPlay(false); fcStep(-1); };
+  $('fcNext').onclick = () => { fcPlay(false); fcStep(1); };
+  $('fcPlay').onclick = () => fcPlay(!fc.timer);
+  $('fcSlider').oninput = (e) => { fcPlay(false); fc.picked = true; fc.s = +e.target.value; fcRender(); };
 
   // ---------- ชั้นข้อมูลเสริม: เมฆ ลม ความกดอากาศ ----------
   const RL = window.RainLayers;
-  const layersOn = { rain: true, cloud: false, wind: false, pres: false, temp: false, tempMode: 'min', tnow: false, wnow: false };
+  const layersOn = { rain: true, cloud: false, wind: false, pres: false, temp: false, tnow: false, wnow: false };
   try { Object.assign(layersOn, JSON.parse(localStorage.getItem('rainmap.layers') || '{}')); } catch (e) { /* ใช้ค่าเริ่มต้น */ }
   // เมฆหลังเวลาภาพดาวเทียมล่าสุด: เลื่อนตามทิศทางและความเร็วของกลุ่มฝน (ใช้สนามเดียวกับคาดการณ์ฝน)
   // แหล่งไทยไม่มีสนามการเคลื่อนที่ จึงยืมของทั้งภูมิภาคถ้าโหลดไว้แล้ว
@@ -583,7 +573,7 @@
   wind.setDark(true);
   map.on('baselayerchange', (e) => { darkBase = e.name === BASE_OWN || e.name === 'ดาวเทียม' || e.name === 'โทนมืด'; wind.setDark(darkBase); rb.setDark(darkBase); presKey = ''; applyLayers(); });
 
-  function wxAt(t) {      // ข้อมูลลม/ความกดอากาศ ณ เวลาที่ t (ต้นวันของวันที่ t)
+  function wxAt(t) {      // ข้อมูลลม/ความกดอากาศ ณ เวลาที่ t (init + 3t ชม.)
     const w = fc.wx, n = w.g.nx * w.g.ny;
     if (!w.cache[t]) {
       const u = new Float32Array(n), v = new Float32Array(n), p = new Float32Array(n);
@@ -628,7 +618,7 @@
 
   function cloudPreload() { if (layersOn.cloud && page === 'now' && now.frames.length) cloud.preload([...new Set(now.frames.map(cloudKey))]); }
   function applyLayers() {
-    const fieldOn = page === 'fc' ? (layersOn.rain || layersOn.temp) : layersOn.rain;
+    const fieldOn = layersOn.rain;
     if (fieldOn) { if (!map.hasLayer(rainGroup)) rainGroup.addTo(map); } else if (map.hasLayer(rainGroup)) map.removeLayer(rainGroup);
     const cloudOn = layersOn.cloud && page === 'now';
     if (cloudOn) {
@@ -639,32 +629,25 @@
     tnowShow();
     cityTemps();
     const wxOk = page === 'fc' && fc.wx;
-    windKey = '';
-    if (wxOk && layersOn.wind) { wind.setData(wxAt(fc.start)); wind.show(true); }
-    else if (wnowOn()) wnowShow();
-    else wind.show(false);
-    if (wxOk && layersOn.pres) { drawPressure(fc.start); if (!map.hasLayer(presGroup)) presGroup.addTo(map); } else if (map.hasLayer(presGroup)) map.removeLayer(presGroup);
+    if (wxOk && layersOn.wind) {
+      // เล่นต่อเนื่อง: เปลี่ยนสนามลมโดยไม่เริ่มเส้นใหม่ ภาพจึงไม่กระตุกทุกช่วง
+      const key = 'fc:' + fc.s;
+      if (windKey !== key) { const first = !windKey.startsWith('fc:'); windKey = key; if (first) wind.setData(wxAt(fc.s + 1)); else wind.update(wxAt(fc.s + 1)); }
+      wind.show(true);
+    } else if (wnowOn()) { if (windKey.startsWith('fc:')) windKey = ''; wnowShow(); }
+    else { windKey = ''; wind.show(false); }
+    if (wxOk && layersOn.pres) { drawPressure(fc.s + 1); if (!map.hasLayer(presGroup)) presGroup.addTo(map); } else if (map.hasLayer(presGroup)) map.removeLayer(presGroup);
     document.querySelectorAll('.chips button[data-l]').forEach((b) => {
-      const fcRain = b.dataset.l === 'rain' && b.closest('#page-fc');
-      b.classList.toggle('active', fcRain ? (layersOn.rain && !layersOn.temp) : !!layersOn[b.dataset.l]);
+      b.classList.toggle('active', !!layersOn[b.dataset.l]);
       if (b.dataset.l === 'wind' || b.dataset.l === 'pres') b.disabled = !fc.wx;
       if (b.dataset.l === 'temp') b.disabled = !(fc.meta && fc.meta.temp);
       if (b.dataset.l === 'tnow') b.disabled = !(fc.meta && fc.meta.tnow);
       if (b.dataset.l === 'wnow') b.disabled = !(fc.meta && fc.meta.wnow && fc.wx);
     });
   }
-  document.querySelectorAll('#tempMode button').forEach((b) => {
-    b.onclick = () => {
-      layersOn.tempMode = b.dataset.m;
-      try { localStorage.setItem('rainmap.layers', JSON.stringify(layersOn)); } catch (e) { /* ข้ามได้ */ }
-      if (page === 'fc' && fc.meta) fcShow();
-    };
-  });
   document.querySelectorAll('.chips button[data-l]').forEach((b) => {
     b.onclick = () => {
-      // หน้าพยากรณ์: ฝนกับอุณหภูมิเป็นสีเต็มแผนที่ทั้งคู่ จึงแสดงทีละอย่าง (สถานะฝนของหน้าฝนตอนนี้ไม่เปลี่ยน)
-      if (b.dataset.l === 'rain' && b.closest('#page-fc') && layersOn.temp) { layersOn.temp = false; layersOn.rain = true; }
-      else layersOn[b.dataset.l] = !layersOn[b.dataset.l];
+      layersOn[b.dataset.l] = !layersOn[b.dataset.l];
       try { localStorage.setItem('rainmap.layers', JSON.stringify(layersOn)); } catch (e) { /* ข้ามได้ */ }
       applyLayers();
       if (b.dataset.l === 'tnow' && layersOn.tnow) loadTemp();      // ใช้ต่ำสุด/สูงสุดของวันนี้ใน popup
@@ -752,16 +735,17 @@
     if (tnowOn() && fc.tnow) {
       const f = now.frames[now.cur], h = tnowHour(f ? f.time : new Date().toISOString());
       rb.setTemps(h < 0 ? null : (lat, lon) => tnowAt(h, lat, lon));
+      fc.tempKey = '';
     } else if (page === 'fc' && layersOn.temp && fc.temp) {
-      const which = tempWhich(), win = fc.win, start = fc.start, key = start + ':' + win + ':' + which;
-      if (!fc.temp.wcache) fc.temp.wcache = new Map();
-      if (!fc.temp.wcache.has(key)) fc.temp.wcache.set(key, tempWindow(start, win, which));
-      const vals = fc.temp.wcache.get(key), g = fc.grid;
-      rb.setTemps((lat, lon) => {
-        const r = Math.round((lat - g.lat0) / g.dlat), c = Math.round((lon - g.lon0) / g.dlon);
-        return r < 0 || c < 0 || r >= g.ny || c >= g.nx ? null : vals[r * g.nx + c];
+      const k = tempDay(fc.s);
+      if (fc.tempKey === 'k' + k) return;           // วันเดิม ไม่ต้องเขียนป้ายใหม่ (ตอนเล่นต่อเนื่อง)
+      fc.tempKey = 'k' + k;
+      const f = (v) => (v === null ? '-' : Math.round(v));
+      rb.setTemps(k < 0 ? null : (lat, lon) => {
+        const lo = tempAt(k, 0, lat, lon), hi = tempAt(k, 1, lat, lon);
+        return lo === null && hi === null ? null : `${f(lo)}/${f(hi)}°`;
       });
-    } else rb.setTemps(null);
+    } else { fc.tempKey = ''; rb.setTemps(null); }
   }
 
   // ---------- แหล่งที่มา / เวลาข้อมูล ----------
@@ -787,7 +771,7 @@
     page = p;
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === p));
     document.querySelectorAll('.page').forEach((s) => s.classList.toggle('active', s.id === 'page-' + p));
-    nowPlay(false); clearImage();
+    nowPlay(false); fcPlay(false); clearImage();
     fitThailandOnce(p);   // เปิดหน้าไหนครั้งแรก ให้เห็นประเทศไทยพอดี หลังจากนั้นไม่ยุ่งกับมุมมองของผู้ใช้
     credits();
     applyLayers();

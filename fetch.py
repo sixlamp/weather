@@ -81,30 +81,19 @@ def fetch_radar() -> dict:
     return {"latest": idx.get("latest"), "frames": len(slim["frames"]), "nowcast": len(slim["nowcast"])}
 
 
-def fetch_forecast_rid() -> dict:
-    """ทางสำรอง: ไฟล์ forecast ของระบบสมดุลน้ำ กรมชลประทาน (ครอบคลุมเฉพาะประเทศไทย)"""
-    meta = json.loads(get("forecast/meta.json"))
-    meta.pop("leadHours", None)              # ยาวและไม่ได้ใช้
-    meta["provider"] = "rid"
-    save("forecast/meta.json", json.dumps(meta, ensure_ascii=False).encode("utf-8"))
-    save("forecast/daily.bin", get("forecast/daily.bin"))
-    return {"init": meta.get("init"), "source": meta.get("source"), "provider": "rid"}
-
-
 def fetch_forecast() -> dict:
-    """ทางหลัก: GFS จาก NOAA ทั้งภูมิภาค ถ้าล้มเหลวและยังไม่มีไฟล์เดิม ใช้ของกรมชลฯ แทน"""
+    """GFS จาก NOAA ทั้งภูมิภาค ถ้าล้มเหลวแต่มีไฟล์รอบก่อนอยู่แล้ว ใช้ของเดิมต่อ
+    (ไฟล์ forecast ของกรมชลฯ เป็นฝนรายวันเท่านั้น ใช้กับหน้าพยากรณ์ทุก 3 ชม. ไม่ได้แล้ว)"""
     import fetch_gfs
     try:
         return fetch_gfs.fetch(force="--force" in sys.argv)
     except Exception as e:  # noqa: BLE001
         print("GFS จาก NOAA ล้มเหลว:", e)
-        if (OUT / "forecast" / "daily.bin").exists():
+        if fetch_gfs.current_init():
             m = json.loads((OUT / "forecast" / "meta.json").read_text(encoding="utf-8"))
             return {"init": m.get("init"), "source": m.get("source"), "provider": m.get("provider"),
                     "kept": True, "error": str(e)}
-        r = fetch_forecast_rid()
-        r["fallback"] = str(e)
-        return r
+        raise
 
 
 def main() -> int:
@@ -150,7 +139,7 @@ def main() -> int:
     # (เรดาร์ไทยที่ดึงไม่ได้ หน้าเว็บจะแจ้งเองว่าแหล่งนั้นใช้ไม่ได้ ส่วนเรดาร์ภูมิภาคโหลดตรงจาก browser)
     if not ok:
         print("คำเตือน: บางแหล่งดึงไม่ได้ ดู data/status.json")
-    return 0 if (OUT / "forecast" / "daily.bin").exists() else 1
+    return 0 if (OUT / "forecast" / "rain.bin").exists() else 1
 
 
 if __name__ == "__main__":
