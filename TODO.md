@@ -25,7 +25,7 @@
 - nowcast ภูมิภาคทดสอบย้อนหลังแค่ช่วงเดียวที่ฝนเคลื่อนช้า (ประมาณ 8 กม./ชม.) ยังไม่ได้ดูวันที่ฝนเคลื่อนเร็ว ขอบการค้นหาตอนนี้รับได้ถึงประมาณ 150 กม./ชม.
 - ตัดสินใจแล้ว: หน้าฝนตอนนี้ใช้ RainViewer ทั้งภูมิภาคเป็นค่าเริ่มต้น คำนวณ nowcast ใน browser (ไม่ผ่าน Actions) เก็บแหล่งไทยของกรมชลฯ ไว้ให้สลับได้
 - cache forecast ใน GitHub Actions ทำงานแล้ว (รอบ deploy 4f77d9f ขึ้น skipped ไม่ดึง NOAA ซ้ำ) แต่ workflow ยังยิง NOMADS 1 ถึง 2 คำขอทุก 15 นาทีเพื่อเช็ครอบใหม่
-- เว็บขึ้นแล้วที่ https://nabogus.github.io/rainmap/ (บัญชี GitHub คือ nabogus) workflow ดึงข้อมูลทุก 15 นาที ถ้า cron หยุด (repo ไม่มี commit 60 วัน) ต้องเข้าไปกด Enable ที่แท็บ Actions
+- เว็บอยู่ที่ https://sixlamp.github.io/weather/ (บัญชี GitHub คือ sixlamp ย้ายจาก nabogus/rainmap เมื่อ 17 พ.ย. 2569 ลิงก์เดิม nabogus.github.io/rainmap เลิกใช้) workflow ดึงข้อมูลทุก 15 นาที ถ้า cron หยุด (repo ไม่มี commit 60 วัน) ต้องเข้าไปกด Enable ที่แท็บ Actions
 - ยังไม่ได้ขออนุญาตเจ้าของระบบสมดุลน้ำ กรมชลประทาน (http://183.88.230.184:8002) ในการดึงไฟล์ทุก 15 นาที ถ้าจะใช้จริงควรขอก่อน
 - ตัดสินใจแล้ว: forecast ดึง GFS จาก NOAA เองทั้งภูมิภาค ส่วนเรดาร์ยังดึงจากเว็บกรมชลฯ (ไม่ดึงเรดาร์กรมอุตุฯ เอง) ใช้ Leaflet + Python มาตรฐาน deploy ด้วย GitHub Actions แบบ upload artifact (ไม่ commit data/ ลง repo)
 - แผนที่ฐานใช้ OSM, OpenTopoMap, Esri (ดาวเทียม / dark gray / ชื่อเมือง) ฟรีไม่ต้อง key ส่วน CARTO และ Stadia ต้องมี key แล้ว ใช้ไม่ได้

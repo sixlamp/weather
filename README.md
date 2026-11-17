@@ -45,9 +45,9 @@ python -m http.server 8791 --bind 127.0.0.1
 
 ## ขึ้น GitHub Pages
 
-1. สร้าง repo ชื่อ `rainmap` แล้ว push โค้ดขึ้น branch `main`
+1. สร้าง repo ชื่อ `weather` แล้ว push โค้ดขึ้น branch `main`
 2. Settings > Pages > Build and deployment > Source เลือก **GitHub Actions**
-3. รัน workflow ครั้งแรกจากแท็บ Actions (หรือรอ push) จะได้ที่ `https://<user>.github.io/rainmap/`
+3. รัน workflow ครั้งแรกจากแท็บ Actions (หรือรอ push) จะได้ที่ `https://<user>.github.io/weather/`
 
 Workflow ตั้ง cron ทุก 15 นาที GitHub อาจหน่วงได้ 5 ถึง 15 นาที และจะหยุด cron เองถ้า repo ไม่มี commit นาน 60 วัน
 (เข้าไปกด Enable อีกครั้งในแท็บ Actions)

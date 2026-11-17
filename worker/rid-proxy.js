@@ -7,7 +7,7 @@
 // deploy: วางไฟล์นี้ใน Cloudflare dashboard > Workers & Pages > rid-proxy > Edit code แล้วกด Deploy
 // Cloudflare ไม่ให้ Worker ดึงจากที่อยู่ IP ตรง ๆ (ตอบ 403) จึงใช้ชื่อโฮสต์ของ sslip.io ที่ชี้กลับไป IP เดิม
 const UPSTREAM = 'http://183-88-230-184.sslip.io:8002/waterbalance/data';
-const ORIGINS = ['https://nabogus.github.io', 'http://127.0.0.1:8791', 'http://localhost:8791'];
+const ORIGINS = ['https://sixlamp.github.io', 'http://127.0.0.1:8791', 'http://localhost:8791'];
 const INDEX = '/obs/radar/index.json';
 const FRAME = /^\/obs\/radar\/frames\/[A-Za-z0-9_]+\.png$/;
 
