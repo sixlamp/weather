@@ -14,6 +14,7 @@
 
   // ---------- แผนที่ ----------
   const map = L.map('map', { zoomControl: true, attributionControl: true, zoomSnap: 0.5 }).setView([13.5, 101], 6);
+  map.attributionControl.setPrefix(false);   // ไม่แสดงคำว่า Leaflet (สัญญา BSD-2 ไม่บังคับ) เหลือแค่เครดิตแหล่งข้อมูล
   const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
   map.createPane('tempNowPane').style.zIndex = 250; map.getPane('tempNowPane').style.pointerEvents = 'none';
   map.createPane('cloudPane').style.zIndex = 300; map.getPane('cloudPane').style.pointerEvents = 'none';
