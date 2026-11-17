@@ -310,6 +310,8 @@
       }
       if (fc.wx) {
         const d = wxAt(fc.s + 1), u = RL.sampleGrid(d.g, d.u, ll.lat, ll.lng), v2 = RL.sampleGrid(d.g, d.v, ll.lat, ll.lng), pp = RL.sampleGrid(d.g, d.p, ll.lat, ll.lng);
+        const cc = fc.cloud ? cloudAt(fc.s + 1, ll.lat, ll.lng) : null;
+        if (cc !== null) h += `<br>เมฆปกคลุม ${cc}%`;
         if (u === u) h += `<br>ลม ${(Math.hypot(u, v2) * 3.6).toFixed(0)} กม./ชม. จากทิศ${RL.windFrom(u, v2)} | ${pp.toFixed(0)} hPa<br><span class="small">ณ ${fmtDateTime(fcIso(fc.s))}</span>`;
       }
     }
@@ -504,6 +506,13 @@
         fc.wx = { g: { lat0: w.lat0, lon0: w.lon0, dlat: w.dlat, dlon: w.dlon, nx: w.nx, ny: w.ny }, wind: new Int8Array(wb), pres, scale: w.wind.scale, offsetPa: w.pres.offsetPa, cache: {} };
       } catch (e) { fc.wx = null; }
     }
+    fc.cloud = null;
+    if (fc.wx && fc.meta.wx.cloud) {
+      try {
+        const r = await fetch('data/forecast/' + fc.meta.wx.cloud.file + '?t=' + Date.now());
+        if (r.ok) fc.cloud = { data: new Uint8Array(await r.arrayBuffer()), cache: new Map() };
+      } catch (e) { fc.cloud = null; }
+    }
     if (!fc.picked) fc.s = fcHome();
     fc.s = Math.min(fc.s, fc.n - 1);
     fcTicks();
@@ -526,10 +535,59 @@
   }
   function fcShow() {
     const note = 'ฝนที่ตกในช่วง 3 ชม. ก่อนถึงเวลาที่เลือก | ไล่สีระหว่างจุดกริด 0.25 องศา (ค่าประมาณ)' + (fc.wx && layersOn.pres ? '<br>เส้นความกดอากาศ: <b style="color:#2f6bff">น้ำเงินเข้ม</b> = สูง อากาศเย็นแผ่ลงมา | <b style="color:#e0662a">ส้มแดง</b> = ต่ำ' : '')
-      + (layersOn.temp ? '<br>ตัวเลขข้างชื่อเมือง: อุณหภูมิต่ำสุด/สูงสุดของวันนั้น (°C)' : '');
+      + (layersOn.temp ? '<br>ตัวเลขข้างชื่อเมือง: อุณหภูมิต่ำสุด/สูงสุดของวันนั้น (°C)' : '')
+      + (layersOn.fcloud && fc.cloud ? '<br>เมฆ: เมฆปกคลุมรวมทุกชั้นจาก GFS ยิ่งทึบยิ่งครึ้ม (ไม่ใช่ภาพถ่ายดาวเทียม)' : '');
     legend('ฝนใน 3 ชม. (มม.)', fc.meta.levels.step, ACC_COLORS, '', note);
     if (layersOn.temp && !fc.temp) loadTemp().then(() => { if (page === 'fc') cityTemps(); });
     fcRender();
+  }
+
+  // ---------- เมฆพยากรณ์ (GFS เมฆปกคลุมรวมทุกชั้น %) ----------
+  function cloudAt(t, lat, lon) {
+    const g = fc.wx.g, r = Math.round((lat - g.lat0) / g.dlat), c = Math.round((lon - g.lon0) / g.dlon);
+    if (r < 0 || c < 0 || r >= g.ny || c >= g.nx) return null;
+    const v = fc.cloud.data[t * g.nx * g.ny + r * g.nx + c];
+    return v === 255 ? null : v;
+  }
+  function cloudImage(t) {
+    const key = t + ':' + darkBase;
+    if (fc.cloud.cache.has(key)) return fc.cloud.cache.get(key);
+    const g = fc.wx.g, nx = g.nx, ny = g.ny, off = t * nx * ny, d = fc.cloud.data;
+    const S = g.lat0 - g.dlat / 2, N = g.lat0 + (ny - 1) * g.dlat + g.dlat / 2, Wl = g.lon0 - g.dlon / 2;
+    const PX = 12, W = nx * PX, H = ny * PX;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H), px = im.data;
+    const yN = merc(N), yS = merc(S);
+    const at = (r, c) => { const v = d[off + Math.max(0, Math.min(ny - 1, r)) * nx + Math.max(0, Math.min(nx - 1, c))]; return v === 255 ? 0 : v; };
+    const col = darkBase ? [236, 240, 245] : [105, 115, 128];   // บนพื้นสว่าง เมฆสีขาวมองไม่เห็น ใช้เทาแทน
+    for (let y = 0; y < H; y++) {
+      const lat = unmerc(yN - ((y + 0.5) / H) * (yN - yS));
+      const fr = (lat - g.lat0) / g.dlat, r0 = Math.floor(fr), tr = fr - r0;
+      for (let x = 0; x < W; x++) {
+        const lon = Wl + ((x + 0.5) / W) * (nx * g.dlon);
+        const fcc = (lon - g.lon0) / g.dlon, c0 = Math.floor(fcc), tc = fcc - c0;
+        const v = (at(r0, c0) * (1 - tc) + at(r0, c0 + 1) * tc) * (1 - tr) + (at(r0 + 1, c0) * (1 - tc) + at(r0 + 1, c0 + 1) * tc) * tr;
+        if (v < 15) continue;                       // เมฆน้อยกว่า 15% ถือว่าฟ้าโปร่ง
+        const a = Math.pow((v - 15) / 85, 0.8) * 190;
+        const ex = Math.min(fcc + 0.5, nx - 0.5 - fcc), ey = Math.min(fr + 0.5, ny - 0.5 - fr);
+        const edge = Math.max(0, Math.min(1, Math.min(ex, ey) / 2));
+        const p = (y * W + x) * 4;
+        px[p] = col[0]; px[p + 1] = col[1]; px[p + 2] = col[2]; px[p + 3] = Math.round(a * edge * edge);
+      }
+    }
+    ctx.putImageData(im, 0, 0);
+    const url = cv.toDataURL('image/png');
+    fc.cloud.cache.set(key, url);
+    return url;
+  }
+  let fcCloudOverlay = null;
+  function fcCloudShow() {
+    const on = page === 'fc' && layersOn.fcloud && fc.cloud && fc.wx;
+    if (!on) { if (fcCloudOverlay) { map.removeLayer(fcCloudOverlay); fcCloudOverlay = null; } return; }
+    const g = fc.wx.g, b = L.latLngBounds([g.lat0 - g.dlat / 2, g.lon0 - g.dlon / 2], [g.lat0 + (g.ny - 0.5) * g.dlat, g.lon0 + (g.nx - 0.5) * g.dlon]);
+    const url = cloudImage(fc.s + 1);
+    if (!fcCloudOverlay) fcCloudOverlay = L.imageOverlay(url, b, { pane: 'cloudPane', interactive: false }).addTo(map);
+    else fcCloudOverlay.setUrl(url);
   }
 
   function fcStep(d) {
@@ -551,7 +609,7 @@
 
   // ---------- ชั้นข้อมูลเสริม: เมฆ ลม ความกดอากาศ ----------
   const RL = window.RainLayers;
-  const layersOn = { rain: true, cloud: false, wind: false, pres: false, temp: false, tnow: false, wnow: false };
+  const layersOn = { rain: true, cloud: false, wind: false, pres: false, temp: false, tnow: false, wnow: false, fcloud: false };
   try { Object.assign(layersOn, JSON.parse(localStorage.getItem('rainmap.layers') || '{}')); } catch (e) { /* ใช้ค่าเริ่มต้น */ }
   // เมฆหลังเวลาภาพดาวเทียมล่าสุด: เลื่อนตามทิศทางและความเร็วของกลุ่มฝน (ใช้สนามเดียวกับคาดการณ์ฝน)
   // แหล่งไทยไม่มีสนามการเคลื่อนที่ จึงยืมของทั้งภูมิภาคถ้าโหลดไว้แล้ว
@@ -627,6 +685,7 @@
       cloudPreload();
     } else cloud.hide();
     tnowShow();
+    fcCloudShow();
     cityTemps();
     const wxOk = page === 'fc' && fc.wx;
     if (wxOk && layersOn.wind) {
@@ -643,6 +702,7 @@
       if (b.dataset.l === 'temp') b.disabled = !(fc.meta && fc.meta.temp);
       if (b.dataset.l === 'tnow') b.disabled = !(fc.meta && fc.meta.tnow);
       if (b.dataset.l === 'wnow') b.disabled = !(fc.meta && fc.meta.wnow && fc.wx);
+      if (b.dataset.l === 'fcloud') b.disabled = !fc.cloud;
     });
   }
   document.querySelectorAll('.chips button[data-l]').forEach((b) => {

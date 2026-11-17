@@ -5,6 +5,7 @@
   data/forecast/meta.json
   data/forecast/wind.bin   int8 [เวลา 57 จุด ห่างกัน 3 ชม.][u แล้ว v][แถว][คอลัมน์] ค่า x 0.5 = ม./วินาที กริด 0.5 องศา
   data/forecast/pres.bin   uint16 [เวลา][แถว][คอลัมน์] ค่า + 85000 = Pa
+  data/forecast/cloud.bin  uint8 [เวลา 57 จุด][แถว][คอลัมน์] เมฆปกคลุมรวมทุกชั้น (TCDC) เป็น % กริด 0.5 องศา 255 = ไม่มีข้อมูล
   data/forecast/wnow.bin   int8 [ชั่วโมง 0..NOW_HOURS นับจาก init][u แล้ว v][แถว][คอลัมน์] ลม 10 ม. รายชั่วโมง (หน้าอากาศตอนนี้)
   data/forecast/tnow.bin   uint8 [ชั่วโมง 0..NOW_HOURS นับจาก init][แถว][คอลัมน์] อุณหภูมิ 2 ม. รายชั่วโมง ถอดค่าเหมือน temp.bin
   data/forecast/temp.bin   uint8 [วันตามปฏิทินไทย 7 วัน][ต่ำสุด แล้ว สูงสุด][แถว][คอลัมน์] ค่า / 2 - 40 = องศาเซลเซียส 255 = ไม่มีข้อมูล
@@ -44,8 +45,8 @@ PAUSE = 0.4          # เว้นจังหวะระหว่างคำ
 def _url(cycle: datetime, fh: int) -> str:
     ymd, hh = cycle.strftime("%Y%m%d"), cycle.strftime("%H")
     return (f"{FILTER}?dir=%2Fgfs.{ymd}%2F{hh}%2Fatmos&file=gfs.t{hh}z.pgrb2.0p25.f{fh:03d}"
-            f"&var_APCP=on&var_UGRD=on&var_VGRD=on&var_PRMSL=on&var_TMIN=on&var_TMAX=on&var_TMP=on"
-            f"&lev_surface=on&lev_10_m_above_ground=on&lev_2_m_above_ground=on&lev_mean_sea_level=on"
+            f"&var_APCP=on&var_UGRD=on&var_VGRD=on&var_PRMSL=on&var_TMIN=on&var_TMAX=on&var_TMP=on&var_TCDC=on"
+            f"&lev_surface=on&lev_10_m_above_ground=on&lev_2_m_above_ground=on&lev_mean_sea_level=on&lev_entire_atmosphere=on"
             f"&subregion=&toplat={NORTH}&leftlon={WEST}&rightlon={EAST}&bottomlat={SOUTH}")
 
 
@@ -111,6 +112,15 @@ def _field(msgs: list, cat: int, num: int):
     raise RuntimeError(f"ไม่พบตัวแปร {cat}/{num} ในไฟล์")
 
 
+def _cloud(msgs: list):
+    """เมฆปกคลุมรวมทุกชั้น (TCDC entire atmosphere) ณ เวลานั้น เป็น % ย่อเหลือทุก WX_STEP จุด"""
+    for m in msgs:
+        if (m.cat, m.num) == (6, 1) and m.level_type == 10 and m.range_hours == 0:
+            rows = grib2.to_rows(m)
+            return [r[::WX_STEP] for r in rows[::WX_STEP]]
+    raise RuntimeError("ไม่พบ TCDC ในไฟล์")
+
+
 def _tmp(msgs: list):
     """อุณหภูมิ 2 ม. ณ เวลานั้น (TMP) เป็นองศาเซลเซียส"""
     for m in msgs:
@@ -125,7 +135,7 @@ def current_init() -> str | None:
         return None
     try:
         m = json.loads(p.read_text(encoding="utf-8"))
-        ok = m.get("provider") == "noaa" and m.get("steps") and m.get("wx") and (OUT / "wind.bin").exists() and (OUT / "pres.bin").exists() and m.get("temp") and (OUT / "temp.bin").exists() and m.get("tnow") and (OUT / "tnow.bin").exists() and m.get("wnow") and (OUT / "wnow.bin").exists()
+        ok = m.get("provider") == "noaa" and m.get("steps") and m.get("wx") and (OUT / "wind.bin").exists() and (OUT / "pres.bin").exists() and m.get("temp") and (OUT / "temp.bin").exists() and m.get("tnow") and (OUT / "tnow.bin").exists() and m.get("wnow") and (OUT / "wnow.bin").exists() and m["wx"].get("cloud") and (OUT / "cloud.bin").exists()
         return m.get("init") if ok else None
     except Exception:  # noqa: BLE001
         return None
@@ -142,6 +152,7 @@ def fetch(force: bool = False) -> dict:
     steps = []              # ฝนแต่ละช่วง STEP_H ชม.
     wind = bytearray()      # ต่อเวลา: u int8 แล้ว v int8 หน่วย 0.5 ม./วินาที
     pres = []               # ต่อเวลา: uint16 = Pa - 85000
+    cloud = bytearray()     # ต่อเวลา: uint8 เมฆปกคลุม % (255 = ไม่มีข้อมูล)
     wx_shape = None
 
     def add_wx(msgs):
@@ -153,6 +164,8 @@ def fetch(force: bool = False) -> dict:
                 wind.extend(struct.pack("%db" % len(row), *[max(-127, min(127, round((x or 0) * 2))) for x in row]))
         for row in p:
             pres.extend(max(0, min(65535, round((x or 101300) - 85000))) for x in row)
+        for row in _cloud(msgs):
+            cloud.extend(255 if x is None else max(0, min(100, round(x))) for x in row)
 
     # อุณหภูมิต่ำสุด/สูงสุดของแต่ละวันตามปฏิทินไทย จาก TMIN/TMAX ทุกช่วงที่ GFS ให้มา
     local0 = (cycle + timedelta(hours=7)).date()
@@ -239,7 +252,8 @@ def fetch(force: bool = False) -> dict:
         "wx": {"lat0": lat0, "lon0": lon0, "dlat": dlat * WX_STEP, "dlon": dlon * WX_STEP, "nx": wx_shape[0], "ny": wx_shape[1],
                "times": NSTEPS + 1, "stepHours": STEP_H,
                "wind": {"file": "wind.bin", "dtype": "int8", "scale": 0.5, "order": "time, u then v, row, col"},
-               "pres": {"file": "pres.bin", "dtype": "uint16", "offsetPa": 85000}},
+               "pres": {"file": "pres.bin", "dtype": "uint16", "offsetPa": 85000},
+               "cloud": {"file": "cloud.bin", "dtype": "uint8", "unit": "%", "order": "time, row, col", "nodata": 255}},
         "temp": {"file": "temp.bin", "dtype": "uint8", "decode": "v / 2 - 40 (degC), 255 = no data", "order": "day, min then max, row, col",
                  "days": DAYS, "dates": [(local0 + timedelta(days=k)).isoformat() for k in range(DAYS)],
                  "minWindow": "GFS TMIN ending 04:00-10:00 ICT", "maxWindow": "GFS TMAX ending 13:00-19:00 ICT",
@@ -255,6 +269,7 @@ def fetch(force: bool = False) -> dict:
     (OUT / "rain.bin").write_bytes(bytes(rb))
     (OUT / "wind.bin").write_bytes(bytes(wind))
     (OUT / "pres.bin").write_bytes(struct.pack("<%dH" % len(pres), *pres))
+    (OUT / "cloud.bin").write_bytes(bytes(cloud))
     tb = bytearray([255]) * (DAYS * 2 * nx * ny)
     for which, store in ((0, tlo), (1, thi)):
         for k, rows in store.items():
