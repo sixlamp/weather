@@ -560,15 +560,28 @@
     const yN = merc(N), yS = merc(S);
     const at = (r, c) => { const v = d[off + Math.max(0, Math.min(ny - 1, r)) * nx + Math.max(0, Math.min(nx - 1, c))]; return v === 255 ? 0 : v; };
     const col = darkBase ? [236, 240, 245] : [105, 115, 128];   // บนพื้นสว่าง เมฆสีขาวมองไม่เห็น ใช้เทาแทน
+    // ไล่ค่าด้วย cubic B-spline (ใช้ 4x4 จุดรอบ ๆ) แทน bilinear: ขอบเมฆโค้งนุ่ม ไม่เห็นเป็นเหลี่ยมตามกริด 0.5 องศา
+    const bs = (t, w) => { const t2 = t * t, t3 = t2 * t, u = 1 - t; w[0] = (u * u * u) / 6; w[1] = (3 * t3 - 6 * t2 + 4) / 6; w[2] = (-3 * t3 + 3 * t2 + 3 * t + 1) / 6; w[3] = t3 / 6; };
+    const cx0 = new Int32Array(W), wxs = new Float32Array(W * 4), tmp = [0, 0, 0, 0];
+    for (let x = 0; x < W; x++) {
+      const f = (Wl + ((x + 0.5) / W) * (nx * g.dlon) - g.lon0) / g.dlon, c0 = Math.floor(f);
+      cx0[x] = c0; bs(f - c0, tmp); wxs.set(tmp, x * 4);
+    }
+    const wy = [0, 0, 0, 0];
     for (let y = 0; y < H; y++) {
       const lat = unmerc(yN - ((y + 0.5) / H) * (yN - yS));
-      const fr = (lat - g.lat0) / g.dlat, r0 = Math.floor(fr), tr = fr - r0;
+      const fr = (lat - g.lat0) / g.dlat, r0 = Math.floor(fr);
+      bs(fr - r0, wy);
       for (let x = 0; x < W; x++) {
-        const lon = Wl + ((x + 0.5) / W) * (nx * g.dlon);
-        const fcc = (lon - g.lon0) / g.dlon, c0 = Math.floor(fcc), tc = fcc - c0;
-        const v = (at(r0, c0) * (1 - tc) + at(r0, c0 + 1) * tc) * (1 - tr) + (at(r0 + 1, c0) * (1 - tc) + at(r0 + 1, c0 + 1) * tc) * tr;
-        if (v < 15) continue;                       // เมฆน้อยกว่า 15% ถือว่าฟ้าโปร่ง
-        const a = Math.pow((v - 15) / 85, 0.8) * 190;
+        const c0 = cx0[x], k = x * 4;
+        let v = 0;
+        for (let j = 0; j < 4; j++) {
+          const r = r0 - 1 + j;
+          v += wy[j] * (wxs[k] * at(r, c0 - 1) + wxs[k + 1] * at(r, c0) + wxs[k + 2] * at(r, c0 + 1) + wxs[k + 3] * at(r, c0 + 2));
+        }
+        if (v < 10) continue;                       // เมฆน้อยกว่า 10% ถือว่าฟ้าโปร่ง
+        const s = Math.min(1, (v - 10) / 90), a = Math.pow(s * s * (3 - 2 * s), 0.6) * 190;   // ความทึบเริ่มจากศูนย์อย่างนุ่ม ไม่มีขอบตัด
+        const fcc = (Wl + ((x + 0.5) / W) * (nx * g.dlon) - g.lon0) / g.dlon;
         const ex = Math.min(fcc + 0.5, nx - 0.5 - fcc), ey = Math.min(fr + 0.5, ny - 0.5 - fr);
         const edge = Math.max(0, Math.min(1, Math.min(ex, ey) / 2));
         const p = (y * W + x) * 4;
