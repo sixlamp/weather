@@ -180,21 +180,44 @@ window.RainNowcast = (() => {
   }
 
   // ---- วาดเป็นภาพสี ----
-  function render(codes, colors) {
-    const lut = new Uint8Array(256 * 4), th = LEVELS.map((r) => 23 + 16 * Math.log10(r));
-    for (let c = 1; c < 256; c++) {
-      let k = -1; for (let i = 0; i < th.length; i++) if (c - 33 >= th[i]) k = i;
-      if (k < 0) continue;
-      lut.set([colors[k][0], colors[k][1], colors[k][2], 235], c * 4);
-    }
-    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-    const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H), d = im.data;
-    for (let q = 0, p = 0; q < codes.length; q++, p += 4) {
-      const c = codes[q];
-      if (c) { const l = c * 4; d[p] = lut[l]; d[p + 1] = lut[l + 1]; d[p + 2] = lut[l + 2]; d[p + 3] = lut[l + 3]; }
+  // ค่าระดับแบบต่อเนื่อง: 1 = 0.2 มม./ชม. (ระดับแรก), 2 = 1 มม./ชม., ... ระหว่างระดับไล่ตาม log ของปริมาณฝน
+  // ต่ำกว่า 1 คือฝนเบามาก (ใช้ทำขอบจาง), 0 = ไม่มีฝน
+  const LOGL = LEVELS.map((r) => Math.log10(r));
+  const POS = new Float32Array(256);
+  for (let c = 1; c < 256; c++) {
+    const lr = (c - 33 - 23) / 16;                 // log10 มม./ชม. จาก dBZ (Z = 200 R^1.6)
+    let f;
+    if (lr < LOGL[0]) f = 1 + (lr - LOGL[0]) / (LOGL[1] - LOGL[0]);
+    else { let i = 0; while (i < LOGL.length - 1 && lr >= LOGL[i + 1]) i++; f = i + 1 + (i < LOGL.length - 1 ? (lr - LOGL[i]) / (LOGL[i + 1] - LOGL[i]) : 0); }
+    POS[c] = Math.max(0, f);
+  }
+
+  // วาดสนามระดับฝน (Float32Array ขนาด w x h) เป็นภาพ: เกลี่ยด้วย box blur 2 รอบ (ใกล้ gaussian)
+  // แล้วไล่สีต่อเนื่องระหว่างระดับ ขอบฝนค่อย ๆ จางลง ไม่เป็นจุดสีโดด ๆ ตามพิกเซลเรดาร์
+  function paint(f, w, h, colors, alpha = 235) {
+    const tmp = new Float32Array(w * h);
+    const blurH = (src, dst) => { for (let y = 0; y < h; y++) { const o = y * w; for (let x = 0; x < w; x++) dst[o + x] = (src[o + Math.max(0, x - 1)] + src[o + x] + src[o + Math.min(w - 1, x + 1)]) / 3; } };
+    const blurV = (src, dst) => { for (let y = 0; y < h; y++) { const o = y * w, a = Math.max(0, y - 1) * w, b = Math.min(h - 1, y + 1) * w; for (let x = 0; x < w; x++) dst[o + x] = (src[a + x] + src[o + x] + src[b + x]) / 3; } };
+    for (let k = 0; k < 2; k++) { blurH(f, tmp); blurV(tmp, f); }
+    const n = colors.length, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d'), im = ctx.createImageData(w, h), d = im.data;
+    for (let q = 0, p = 0; q < f.length; q++, p += 4) {
+      const v = f[q];
+      if (v < 0.45) continue;
+      const i = Math.max(0, Math.min(n - 1, Math.floor(v) - 1)), t = v < 1 ? 0 : Math.min(1, v - Math.floor(v)), j = Math.min(n - 1, i + 1);
+      const a = colors[i], b = i === n - 1 ? a : colors[j];
+      d[p] = a[0] + (b[0] - a[0]) * t; d[p + 1] = a[1] + (b[1] - a[1]) * t; d[p + 2] = a[2] + (b[2] - a[2]) * t;
+      const e = Math.min(1, (v - 0.45) / 0.75);   // ฝนเบา ๆ ที่ขอบ ค่อย ๆ จาง
+      d[p + 3] = alpha * e * e * (3 - 2 * e);
     }
     ctx.putImageData(im, 0, 0);
     return new Promise((res) => cv.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
+  }
+
+  function render(codes, colors) {
+    const f = new Float32Array(codes.length);
+    for (let q = 0; q < codes.length; q++) f[q] = POS[codes[q]];
+    return paint(f, W, H, colors);
   }
 
   async function index() {
@@ -217,5 +240,5 @@ window.RainNowcast = (() => {
 
   const kmPerPx = (lat) => (40075 * Math.cos((lat * Math.PI) / 180)) / WORLD;
 
-  return { index, loadFrame, shrink, motion, advect, shiftAt, render, sample, rateOf, kmPerPx, BOUNDS, LEVELS, STEP_MIN, N_FC, W, H, DS };
+  return { index, loadFrame, shrink, motion, advect, shiftAt, render, paint, sample, rateOf, kmPerPx, BOUNDS, LEVELS, STEP_MIN, N_FC, W, H, DS };
 })();

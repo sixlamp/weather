@@ -94,15 +94,10 @@
     const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
-    const im = ctx.getImageData(0, 0, cv.width, cv.height), d = im.data;
-    for (let p = 0; p < d.length; p += 4) {
-      const k = d[p];
-      if (k < 1 || k > levelsN) { d[p + 3] = 0; continue; }
-      const c = RATE_COLORS[Math.min(k, RATE_COLORS.length) - 1];
-      d[p] = c[0]; d[p + 1] = c[1]; d[p + 2] = c[2]; d[p + 3] = 235;
-    }
-    ctx.putImageData(im, 0, 0);
-    return new Promise((res) => cv.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
+    const d = ctx.getImageData(0, 0, cv.width, cv.height).data, f = new Float32Array(cv.width * cv.height);
+    // ระดับ k ให้ค่ากลางช่วง (k + 0.5) แล้วเกลี่ยและไล่สีต่อเนื่องแบบเดียวกับแหล่งทั้งภูมิภาค
+    for (let q = 0, p = 0; q < f.length; q++, p += 4) { const k = d[p]; f[q] = k >= 1 && k <= levelsN ? k + 0.5 : 0; }
+    return NC.paint(f, cv.width, cv.height, RATE_COLORS);
   }
 
   function nowHeader() {
