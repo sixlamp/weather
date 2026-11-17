@@ -118,7 +118,8 @@ body.mobile .chips button.active{background:rgba(230,240,255,.92)}
 body.mobile .seg{border-color:rgba(0,0,0,.12)}
 body.mobile .ticks{font-size:11px;color:var(--ink)}
 body.mobile .big{font-size:16px}
-body.mobile .legend{position:absolute;left:10px;right:auto;top:132px;bottom:auto;z-index:800;background:rgba(255,255,255,.85);padding:6px 8px}
+body.mobile .legend{position:relative;left:auto;right:auto;top:auto;bottom:auto;float:left;clear:both;margin:10px 0 0 10px;pointer-events:auto;
+  background:rgba(255,255,255,.85);padding:6px 8px}
 body.mobile .foot{padding:3px 8px calc(4px + env(safe-area-inset-bottom));font-size:10px}
 body.mobile .toast{bottom:auto;top:110px}
 /* ล็อกแนวตั้ง: เบราว์เซอร์มือถือส่วนใหญ่ (โดยเฉพาะ iPhone) ไม่ให้เว็บล็อกการหมุนจอ จึงปิดหน้าแนวนอนด้วยข้อความ */

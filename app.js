@@ -869,7 +869,8 @@
   document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => showPage(t.dataset.page); });
 
   // ---------- มือถือ ----------
-  // จอแคบ: แผนที่เต็มพื้นที่ ย้ายแผงควบคุมไปลอยโปร่งใสที่ขอบล่างของแผนที่ และย้ายคำอธิบายสีไปมุมซ้ายบน
+  // จอแคบ: แผนที่เต็มพื้นที่ ย้ายแผงควบคุมไปลอยโปร่งใสที่ขอบล่างของแผนที่
+  // คำอธิบายสีไปบนสุดของมุมซ้ายบน (เหนือปุ่มซูม) และบรรทัดแหล่งข้อมูลไปบนสุดของมุมขวาบน (เหนือปุ่มชั้นแผนที่)
   // จอกว้าง (คอมพิวเตอร์) คงแบบเดิม
   const mq = window.matchMedia('(max-width: 767px)');
   const floating = [$('page-now'), $('page-fc'), $('page-water'), $('legend')];
@@ -878,12 +879,14 @@
     const mobile = mq.matches, box = map.getContainer();
     document.body.classList.toggle('mobile', mobile);
     floating.forEach((el) => {
-      if (mobile) box.appendChild(el);
+      if (mobile && el.id === 'legend') box.querySelector('.leaflet-top.leaflet-left').prepend(el);
+      else if (mobile) box.appendChild(el);
       else if (el.id === 'legend') box.after(el);
       else box.before(el);
     });
     if (!mobile) box.before($('page-now'), $('page-fc'), $('page-water'));   // คงลำดับ now, fc, water
     map.attributionControl.setPosition(mobile ? 'topright' : 'bottomright');
+    if (mobile) box.querySelector('.leaflet-top.leaflet-right').prepend(map.attributionControl.getContainer());
     setTimeout(() => map.invalidateSize(), 50);
   }
   mq.addEventListener ? mq.addEventListener('change', layoutMobile) : mq.addListener(layoutMobile);
