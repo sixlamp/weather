@@ -17,6 +17,7 @@
   <div class="tabs" role="tablist">
     <button class="tab active" data-page="now" role="tab">อากาศตอนนี้</button>
     <button class="tab" data-page="fc" role="tab">อากาศคาดการณ์ 7 วัน</button>
+    <button class="tab" data-page="water" role="tab">ชลประทาน</button>
   </div>
   <div class="note" id="note">แหล่งที่มา: กำลังโหลด</div>
 </header>
@@ -81,6 +82,20 @@
   </div>
 </section>
 
+<section id="page-water" class="page">
+  <div class="ctrl">
+    <div class="row">
+      <div class="seg" id="waterMode">
+        <button data-m="basin" class="active">ลุ่มน้ำ</button>
+        <button data-m="dam">อ่าง</button>
+      </div>
+      <div class="when">
+        <div id="waterKind" class="small">กำลังโหลด</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <div id="map"></div>
 
 <div id="legend" class="legend"></div>
@@ -93,6 +108,7 @@
 <script src="basemap.js?v=dev"></script>
 <script src="nowcast.js?v=dev"></script>
 <script src="layers.js?v=dev"></script>
+<script src="water.js?v=dev"></script>
 <script src="app.js?v=dev"></script>
 </body>
 </html>

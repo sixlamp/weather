@@ -70,6 +70,15 @@
     el.innerHTML = h + '</div>';
     el.classList.toggle('collapsed', legendCollapsed);
   }
+  // legend แบบรายการสี (ใช้กับช่วงที่ไม่ต่อเนื่อง เช่น % ความจุอ่าง): rows = [[สี css, ข้อความ], ...]
+  function legendRows(title, rows, note) {
+    const el = $('legend');
+    let h = `<button type="button" class="t" aria-expanded="${!legendCollapsed}" title="แตะเพื่อหุบ/กาง">${title}<span class="chev" aria-hidden="true"></span></button><div class="body">`;
+    for (const [c, t] of rows) h += `<div class="r"><span class="sw" style="background:${c}"></span>${t}</div>`;
+    if (note) h += `<div class="n">${note}</div>`;
+    el.innerHTML = h + '</div>';
+    el.classList.toggle('collapsed', legendCollapsed);
+  }
   $('legend').addEventListener('click', (e) => {
     if (!e.target.closest('.t')) return;
     legendCollapsed = !legendCollapsed;
@@ -637,7 +646,7 @@
   const presRenderer = L.canvas({ padding: 0.5 });
   let darkBase = true, presKey = '';      // แผนที่อากาศ (ค่าเริ่มต้น) เป็นโทนเข้ม
   wind.setDark(true);
-  map.on('baselayerchange', (e) => { darkBase = e.name === BASE_OWN || e.name === 'ดาวเทียม' || e.name === 'โทนมืด'; wind.setDark(darkBase); rb.setDark(darkBase); presKey = ''; applyLayers(); });
+  map.on('baselayerchange', (e) => { darkBase = e.name === BASE_OWN || e.name === 'ดาวเทียม' || e.name === 'โทนมืด'; wind.setDark(darkBase); water.setDark(darkBase); rb.setDark(darkBase); presKey = ''; applyLayers(); });
 
   function wxAt(t) {      // ข้อมูลลม/ความกดอากาศ ณ เวลาที่ t (init + 3t ชม.)
     const w = fc.wx, n = w.g.nx * w.g.ny;
@@ -684,7 +693,7 @@
 
   function cloudPreload() { if (layersOn.cloud && page === 'now' && now.frames.length) cloud.preload([...new Set(now.frames.map(cloudKey))]); }
   function applyLayers() {
-    const fieldOn = layersOn.rain;
+    const fieldOn = layersOn.rain && page !== 'water';
     if (fieldOn) { if (!map.hasLayer(rainGroup)) rainGroup.addTo(map); } else if (map.hasLayer(rainGroup)) map.removeLayer(rainGroup);
     const cloudOn = layersOn.cloud && page === 'now';
     if (cloudOn) {
@@ -825,6 +834,8 @@
       if (tnowOn()) src += ' | อุณหภูมิ: NOAA GFS';
       if (wnowOn()) src += ' | ลม: NOAA GFS';
       when = now.latest;
+    } else if (page === 'water') {
+      src = water.source(); when = water.when();
     } else {
       src = 'NOAA GFS' + (fc.meta && fc.meta.provider === 'rid' ? ' ผ่านระบบสมดุลน้ำ (ทดลอง)' : '');
       when = fc.meta ? fc.meta.init : null;
@@ -832,6 +843,9 @@
     $('note').textContent = 'แหล่งที่มา: ' + src;
     $('foot').textContent = (when ? `ข้อมูล ณ ${fmtDateTime(when)}` : 'กำลังโหลดข้อมูล') + ' | แหล่งที่มา: ' + src;
   }
+
+  // ---------- หน้าชลประทาน (water.js) ----------
+  const water = window.RainWater(map, { legend, legendRows, credits: () => credits() });
 
   // ---------- สลับหน้า ----------
   let page = 'now';
@@ -843,8 +857,9 @@
     fitThailandOnce(p);   // เปิดหน้าไหนครั้งแรก ให้เห็นประเทศไทยพอดี หลังจากนั้นไม่ยุ่งกับมุมมองของผู้ใช้
     credits();
     applyLayers();
+    if (p === 'water') water.enter(); else water.leave();
     if (p === 'now') { nowHeader(); nowLegend(); nowRender(); loadNow(); }
-    else if (fc.meta) fcShow();
+    else if (p === 'fc' && fc.meta) fcShow();
     location.hash = p;
     setTimeout(() => map.invalidateSize(), 50);
   }
@@ -854,7 +869,7 @@
   // จอแคบ: แผนที่เต็มพื้นที่ ย้ายแผงควบคุมไปลอยโปร่งใสที่ขอบล่างของแผนที่ และย้ายคำอธิบายสีไปมุมซ้ายบน
   // จอกว้าง (คอมพิวเตอร์) คงแบบเดิม
   const mq = window.matchMedia('(max-width: 767px)');
-  const floating = [$('page-now'), $('page-fc'), $('legend')];
+  const floating = [$('page-now'), $('page-fc'), $('page-water'), $('legend')];
   floating.forEach((el) => { L.DomEvent.disableClickPropagation(el); L.DomEvent.disableScrollPropagation(el); });
   function layoutMobile() {
     const mobile = mq.matches, box = map.getContainer();
@@ -864,7 +879,7 @@
       else if (el.id === 'legend') box.after(el);
       else box.before(el);
     });
-    if (!mobile) box.before($('page-now'), $('page-fc'));   // คงลำดับ now แล้ว fc
+    if (!mobile) box.before($('page-now'), $('page-fc'), $('page-water'));   // คงลำดับ now, fc, water
     map.attributionControl.setPosition(mobile ? 'topright' : 'bottomright');
     setTimeout(() => map.invalidateSize(), 50);
   }
@@ -875,11 +890,12 @@
 
   // ---------- เริ่ม ----------
   (async () => {
-    const want = location.hash === '#fc' ? 'fc' : 'now';
+    const want = location.hash === '#fc' ? 'fc' : location.hash === '#water' ? 'water' : 'now';
     nowHeader(); nowLegend(); applyLayers();
     const pn = loadNow();
     const pf = loadFc().then(() => applyLayers()).catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; $('fcKind').classList.add('err'); });
     if (want === 'fc') { await pf; showPage('fc'); }
+    else if (want === 'water') showPage('water');
     else { fitThailandOnce('now'); credits(); }
     await Promise.all([pn, pf]);
   })();

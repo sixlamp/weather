@@ -44,10 +44,30 @@ jobs:
         with:
           path: data/forecast
           key: fc-${{ steps.fetch.outputs.fc_tag }}
+      # ลุ่มน้ำ/อ่างเก็บน้ำ (หน้าชลประทาน): ดึงทุก 6 ชม. รอบเดียวกันใช้ไฟล์ใน cache
+      - name: Water slot
+        id: wslot
+        run: echo "slot=$(date -u +%Y%m%d)-$(( 10#$(date -u +%H) / 6 ))" >> "$GITHUB_OUTPUT"
+      - name: Restore water cache
+        id: w-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/water
+          key: water-${{ steps.wslot.outputs.slot }}
+          restore-keys: water-
+      - name: Fetch water
+        if: steps.w-cache.outputs.cache-hit != 'true'
+        run: python fetch_water.py --soft
+      - name: Save water cache
+        if: steps.w-cache.outputs.cache-hit != 'true' && hashFiles('data/water/basins.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/water
+          key: water-${{ steps.wslot.outputs.slot }}
       - name: Assemble site
         run: |
           mkdir -p site
-          cp index.html app.js basemap.js basemap.json nowcast.js layers.js style.css manifest.json site/
+          cp index.html app.js basemap.js basemap.json nowcast.js layers.js style.css manifest.json water.js water_basins.png water_basins.json site/
           cp -r data site/data
           # ใส่รหัส commit ท้ายชื่อไฟล์ js/css ให้ browser โหลดชุดใหม่พร้อมกันทุกครั้งที่ deploy
           sed -i "s/?v=dev/?v=${GITHUB_SHA::7}/g" site/index.html
