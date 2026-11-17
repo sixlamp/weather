@@ -60,13 +60,6 @@ window.RainWater = function (map, ui) {
       .finally(() => { st.loading = null; });
     return st.loading;
   }
-  const basinById = (id) => st.basins && st.basins.basins.find((b) => b.id === id);
-  function basinAt(lat, lon) {
-    const G = st.G; if (!G) return null;
-    const x = Math.floor((lon - G.w) / G.d), y = Math.floor((G.n - lat) / G.d);
-    if (x < 0 || y < 0 || x >= G.W || y >= G.H) return null;
-    return basinById(st.ids[y * G.W + x]) || null;
-  }
 
   // ภาพลุ่มน้ำแบบ Web Mercator (แปลงแถวตามละติจูด ภาพจึงตรงกับแผนที่ทุกระดับซูม)
   const merc = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
@@ -174,7 +167,7 @@ window.RainWater = function (map, ui) {
   function legendNow() {
     if (st.mode === 'basin') {
       const chips = [5, 4, 3, 2, 1].map((k) => `<span class="wl-chip" style="background:${LV[k].col}">${LV[k].name}</span>`).join(' ');
-      ui.legend('ฝน 24 ชม. เฉลี่ยในลุ่ม (มม.)', RAIN_LV, RAIN_COL, '', `สีป้ายชื่อ = ระดับน้ำในลำน้ำ (สถานีที่สูงที่สุดในลุ่มเทียบตลิ่ง):<br>${chips}<br>แตะชื่อหรือพื้นที่ลุ่มน้ำเพื่อดูรายละเอียด`);
+      ui.legend('ฝน 24 ชม. เฉลี่ยในลุ่ม (มม.)', RAIN_LV, RAIN_COL, '', `สีป้ายชื่อ = ระดับน้ำในลำน้ำ (สถานีที่สูงที่สุดในลุ่มเทียบตลิ่ง):<br>${chips}<br>แตะป้ายชื่อหรือจุดเพื่อดูรายละเอียด`);
     } else {
       ui.legendRows('อ่างเก็บน้ำขนาดใหญ่ (% ความจุ)', BAND.map((b) => [b.col, `${b.short} ${b.name}`]), `${st.dams ? st.dams.items.length : ''} อ่าง | % ของความจุที่ระดับเก็บกักปกติ ตามช่วงของ ชป. (SWOC) | แตะป้ายเพื่อดูรายละเอียด`);
     }
@@ -197,12 +190,7 @@ window.RainWater = function (map, ui) {
     legendNow();
     ui.credits();
   }
-  function onClick(e) {
-    if (!st.on || st.mode !== 'basin' || !st.basins) return;
-    const b = basinAt(e.latlng.lat, e.latlng.lng);
-    if (b) L.popup({ maxWidth: 280 }).setLatLng(e.latlng).setContent(basinPopup(b)).openOn(map);
-  }
-  map.on('click', onClick);
+  // ป๊อปอัปขึ้นเฉพาะตอนแตะป้ายชื่อหรือจุดของลุ่มน้ำ แตะพื้นที่อื่นบนแผนที่ไม่ขึ้น (ไม่กวนตอนเลื่อนดูแผนที่)
   document.querySelectorAll('#waterMode button').forEach((b) => {
     b.onclick = () => {
       st.mode = b.dataset.m;
