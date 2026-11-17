@@ -1,10 +1,10 @@
-/* nowcast.js: เรดาร์ฝนทั้งภูมิภาคจาก RainViewer และคาดการณ์ 2 ชม. ที่คำนวณเองในเบราว์เซอร์
+/* nowcast.js: เรดาร์ฝนทั้งภูมิภาคจาก RainViewer และคาดการณ์ 3 ชม. ที่คำนวณเองในเบราว์เซอร์
 
    ขั้นตอน
    1. โหลด tile ซูม 4 ขนาด 512 px (2 x 3 แผ่น) ของแต่ละเฟรม ต่อเป็นภาพเดียว แล้วตัดเฉพาะภูมิภาค
    2. ถอดสีแต่ละพิกเซลกลับเป็น dBZ (เก็บเป็น code = dBZ + 33, 0 = ไม่มีฝน)
    3. หาเวกเตอร์การเคลื่อนที่ของกลุ่มฝนด้วย block matching ระหว่างเฟรมห่างกัน 30 นาที
-   4. เลื่อนภาพล่าสุดไปตามเวกเตอร์ทีละ 10 นาที 12 ขั้น
+   4. เลื่อนภาพล่าสุดไปตามเวกเตอร์ทีละ 10 นาที 18 ขั้น (หลังชั่วโมงที่ 2 หน้าเว็บค่อย ๆ จางภาพลง เพราะแม่นน้อยลงมาก)
    ข้อจำกัด: ถือว่ากลุ่มฝนเคลื่อนที่คงที่ ไม่ก่อตัวใหม่และไม่สลายตัว */
 window.RainNowcast = (() => {
   'use strict';
@@ -17,7 +17,7 @@ window.RainNowcast = (() => {
   const CROP_Y = 308, W = 640, H = 900;              // ตัดให้เหลือลองจิจูด 90-118 ละติจูดประมาณ 30 ถึง -8
   const WORLD = TS * (1 << Z);
   const GX0 = TX[0] * TS, GY0 = TY[0] * TS + CROP_Y; // พิกัดพิกเซลโลกของมุมซ้ายบน
-  const STEP_MIN = 10, N_FC = 12;
+  const STEP_MIN = 10, N_FC = 18, SURE_MIN = 120;   // หลัง SURE_MIN นาที ถือว่าความแม่นยำลดลง
   const lonOf = (gx) => (gx / WORLD) * 360 - 180;
   const latOf = (gy) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * gy) / WORLD))) * 180) / Math.PI;
   const BOUNDS = [[latOf(GY0 + H), lonOf(GX0)], [latOf(GY0), lonOf(GX0 + W)]];   // [[S,W],[N,E]]
@@ -240,5 +240,5 @@ window.RainNowcast = (() => {
 
   const kmPerPx = (lat) => (40075 * Math.cos((lat * Math.PI) / 180)) / WORLD;
 
-  return { index, loadFrame, shrink, motion, advect, shiftAt, render, paint, sample, rateOf, kmPerPx, BOUNDS, LEVELS, STEP_MIN, N_FC, W, H, DS };
+  return { index, loadFrame, shrink, motion, advect, shiftAt, render, paint, sample, rateOf, kmPerPx, BOUNDS, LEVELS, STEP_MIN, N_FC, SURE_MIN, W, H, DS };
 })();

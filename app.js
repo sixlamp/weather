@@ -1,4 +1,4 @@
-/* RainMap: แผนที่ฝนตอนนี้ (เรดาร์ + nowcast 2 ชม.) และพยากรณ์ 7 วัน ทุก 3 ชม.
+/* RainMap: แผนที่ฝนตอนนี้ (เรดาร์ + nowcast 3 ชม.) และพยากรณ์ 7 วัน ทุก 3 ชม.
    เรดาร์ภูมิภาคโหลดตรงจาก RainViewer (nowcast.js) ส่วนเรดาร์ไทยและ forecast อ่านจาก data/ ที่ fetch.py ดึงมาไว้ */
 (() => {
   'use strict';
@@ -136,11 +136,14 @@
     $('nowSlider').value = st.cur;
     $('nowTime').textContent = fmtTime(f.time);
     const nowcast = f.kind === 'nowcast', url = st.urls[st.cur];
-    let kind = nowcast ? 'คาดการณ์จากทิศทางและความเร็วกลุ่มฝน' : (st.cur === st.obsLast ? 'ข้อมูลล่าสุดจากเรดาร์' : 'ภาพเรดาร์ย้อนหลัง');
+    // คาดการณ์เกิน 2 ชม. แม่นน้อยลงมาก (ฝนก่อตัว/สลายเร็ว) ค่อย ๆ จางภาพจาก 0.75 ลงถึง 0.4 ที่ 3 ชม.
+    const lead = nowcast ? (Date.parse(f.time) - Date.parse(st.latest)) / 60000 : 0, unsure = lead > NC.SURE_MIN;
+    const op = !nowcast ? 0.9 : unsure ? 0.75 - 0.35 * Math.min(1, (lead - NC.SURE_MIN) / 60) : 0.75;
+    let kind = unsure ? 'คาดการณ์เกิน 2 ชม.: ความแม่นยำลดลง' : nowcast ? 'คาดการณ์จากทิศทางและความเร็วกลุ่มฝน' : (st.cur === st.obsLast ? 'ข้อมูลล่าสุดจากเรดาร์' : 'ภาพเรดาร์ย้อนหลัง');
     if (!url) kind = st.status || 'กำลังเตรียมภาพ';
     else if (st.status && st.loading) kind += ' | ' + st.status;
     $('nowKind').textContent = kind;
-    if (url) showImage(url, st.bounds, nowcast ? 0.75 : 0.9);
+    if (url) showImage(url, st.bounds, op);
     if (layersOn.cloud) cloud.show(cloudKey(f));
     tnowShow();
     if (wnowOn()) wnowShow();
@@ -211,7 +214,7 @@
       if (isActive(st) && i === st.cur) nowRender();
     }
     // เวกเตอร์การเคลื่อนที่จากคู่เฟรมห่างกัน 30 นาที (3 ขั้น) แล้วเลื่อนภาพล่าสุดไปข้างหน้า
-    st.status = 'กำลังคำนวณคาดการณ์ 2 ชม.';
+    st.status = 'กำลังคำนวณคาดการณ์ 3 ชม.';
     if (isActive(st)) nowRender();
     const GAP = 3, small = st.codes.slice(0, nObs).map((c) => NC.shrink(c)), pairs = [];
     for (let i = nObs - 1; i - GAP >= 0 && pairs.length < 3; i -= GAP) pairs.push([small[i], small[i - GAP]]);
@@ -292,9 +295,9 @@
         if (hit === null && r >= 0.5) hit = i;
       }
       if (!done) h += '<br>กำลังคำนวณคาดการณ์';
-      else if (r0 >= 0.5) h += `<br>คาดว่าแรงสุดใน 2 ชม.: ${peak.toFixed(1)} มม./ชม.`;
+      else if (r0 >= 0.5) h += `<br>คาดว่าแรงสุดใน 3 ชม.: ${peak.toFixed(1)} มม./ชม.`;
       else if (hit !== null) h += `<br>คาดว่าฝนถึงประมาณ <b>${fmtTime(now.frames[hit].time)}</b> (สูงสุด ${peak.toFixed(1)} มม./ชม.)`;
-      else h += '<br>คาดว่าไม่มีฝนใน 2 ชม. ข้างหน้า';
+      else h += '<br>คาดว่าไม่มีฝนใน 3 ชม. ข้างหน้า';
     } else if (page === 'fc' && fc.data) {
       const g = fc.grid, r = Math.round((ll.lat - g.lat0) / g.dlat), c = Math.round((ll.lng - g.lon0) / g.dlon);
       if (r < 0 || c < 0 || r >= g.ny || c >= g.nx) return h + '<br>อยู่นอกกรอบข้อมูลพยากรณ์';
@@ -829,7 +832,7 @@
   function credits() {
     let src, when = null;
     if (page === 'now') {
-      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. จากทิศทางและความเร็วของกลุ่มฝน' : 'เรดาร์กรมอุตุนิยมวิทยา (ยังไม่ผ่านการตรวจสอบ) | ประมวลผลและคาดการณ์โดยระบบสมดุลน้ำ (ทดลอง)';
+      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 3 ชม. จากทิศทางและความเร็วของกลุ่มฝน (เกิน 2 ชม. แม่นน้อยลง)' : 'เรดาร์กรมอุตุนิยมวิทยา (ยังไม่ผ่านการตรวจสอบ) | ประมวลผลและคาดการณ์โดยระบบสมดุลน้ำ (ทดลอง)';
       if (layersOn.cloud) src += ' | เมฆ: Himawari ผ่าน NASA GIBS (หลังภาพล่าสุดเลื่อนตามกลุ่มฝน)';
       if (tnowOn()) src += ' | อุณหภูมิ: NOAA GFS';
       if (wnowOn()) src += ' | ลม: NOAA GFS';
