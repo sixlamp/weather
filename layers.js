@@ -3,17 +3,20 @@ window.RainLayers = (() => {
   'use strict';
 
   // ---------- เมฆ ----------
-  // tile ของ GIBS เป็นภาพอินฟราเรดทึบ: โทนเทา ยิ่งสว่าง = ยอดเมฆยิ่งเย็น/สูง ส่วนยอดเมฆเย็นจัดถูกระบายสี
-  // แปลงเป็นเมฆสีขาวโปร่งแสง เพื่อวางทับแผนที่และชั้นฝนได้
-  const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/';
-  // tile ต้นทางที่แปลงเป็นเมฆโปร่งแสงแล้ว เก็บไว้ใช้ซ้ำ (ชั้นเมฆช่วงคาดการณ์ทุกชั้นใช้ภาพต้นทางเดียวกัน)
-  const srcCache = new Map();
-  function cloudTile(time, z, x, y) {
-    const n = 1 << z; x = ((x % n) + n) % n;
-    if (y < 0 || y >= n) return Promise.resolve(null);
-    const key = `${time}/${z}/${x}/${y}`;
-    if (srcCache.has(key)) return srcCache.get(key);
-    if (srcCache.size > 600) srcCache.clear();
+  // ใช้ภาพ Himawari 2 แบบจาก NASA GIBS ผสมกันตามมุมดวงอาทิตย์ของแต่ละจุด
+  //   อินฟราเรด (Band 13, ~2 กม., ซูม 6): โทนเทา ยิ่งสว่าง = ยอดเมฆยิ่งเย็น/สูง ยอดเมฆเย็นจัดถูกระบายสี เห็นได้ทั้งวันทั้งคืน
+  //     แต่เมฆก้อนต่ำที่ยอดอุ่นเกือบเท่าพื้นดินแยกไม่ออก จึงตัดทิ้ง
+  //   แสงที่ตามองเห็น (Band 3, ~1 กม., ซูม 7): เห็นเมฆก้อนเล็กกลางวันชัด แต่กลางคืนมืดหมด
+  // กลางวันใช้ค่าที่มากกว่าของทั้งสองภาพ ช่วงเช้า/เย็นค่อย ๆ ลดน้ำหนักภาพแสงที่ตามองเห็นลง แล้วแปลงเป็นเมฆสีขาวโปร่งแสง
+  const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
+  const IR = { layer: 'Himawari_AHI_Band13_Clean_Infrared', z: 6 }, VIS = { layer: 'Himawari_AHI_Band3_Red_Visible_1km', z: 7 };
+  const MAX_Z = VIS.z;
+  // ภาพต้นทางดิบ (RGBA) ต่อ tile; เวลาที่ขอไม่มีภาพ (ใหม่เกินไปหรือเก่าเกิน 4 ชม.) ใช้ภาพล่าสุดแทน
+  const rawCache = new Map();
+  function raw(src, time, z, x, y) {
+    const key = `${src.layer}/${time}/${z}/${x}/${y}`;
+    if (rawCache.has(key)) return rawCache.get(key);
+    if (rawCache.size > 400) rawCache.clear();
     const pr = new Promise((res) => {
       const load = (t) => {
         const img = new Image(); img.crossOrigin = 'anonymous';
@@ -21,22 +24,73 @@ window.RainLayers = (() => {
           const cv = document.createElement('canvas'); cv.width = cv.height = 256;
           const ctx = cv.getContext('2d', { willReadFrequently: true });
           ctx.drawImage(img, 0, 0);
-          const im = ctx.getImageData(0, 0, 256, 256), d = im.data;
-          for (let p = 0; p < d.length; p += 4) {
-            const r = d[p], g = d[p + 1], b = d[p + 2];
-            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {            // โทนเทา
-              const a = Math.max(0, Math.min(1, (r - 122) / 68));   // ทะเล/พื้นดินอุ่น ~100-115, เมฆต่ำ ~120-140, เมฆกลาง-สูง 150+
-              d[p] = 245; d[p + 1] = 247; d[p + 2] = 250; d[p + 3] = Math.round(Math.pow(a, 1.4) * 225);
-            } else { d[p] = d[p + 1] = d[p + 2] = 255; d[p + 3] = 240; }     // ยอดเมฆเย็นจัด = เมฆหนา
-          }
-          res(im);
+          res(ctx.getImageData(0, 0, 256, 256).data);
         };
-        // เวลาที่ขอไม่มีภาพ (ใหม่เกินไปหรือเก่าเกิน 4 ชม.) ใช้ภาพล่าสุดแทน
         img.onerror = () => { if (t !== 'default') load('default'); else res(null); };
-        img.src = `${GIBS}${t}/GoogleMapsCompatible_Level6/${z}/${y}/${x}.png`;
+        img.src = `${GIBS}${src.layer}/default/${t}/GoogleMapsCompatible_Level${src.z}/${z}/${y}/${x}.png`;
       };
       load(time);
     });
+    rawCache.set(key, pr);
+    pr.then((d) => { if (!d) rawCache.delete(key); });
+    return pr;
+  }
+  // cos มุมเซนิธของดวงอาทิตย์ (สูตรประมาณ ผิดไม่เกินราว 1 องศา พอสำหรับแยกกลางวัน/กลางคืน)
+  function sunAt(ms) {
+    const d = (ms - Date.UTC(2000, 0, 1, 12)) / 864e5, g = (357.529 + 0.98560028 * d) * Math.PI / 180;
+    const q = 280.459 + 0.98564736 * d, lam = (q + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * Math.PI / 180, eps = 23.439 * Math.PI / 180;
+    const dec = Math.asin(Math.sin(eps) * Math.sin(lam)), ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam)) * 180 / Math.PI;
+    const gmst = (280.46061837 + 360.98564736629 * d) % 360;
+    return { sd: Math.sin(dec), cd: Math.cos(dec), h0: gmst - ra };   // มุมชั่วโมงที่ลองจิจูด lon = h0 + lon
+  }
+  const cosZen = (sun, lat, lon) => { const la = lat * Math.PI / 180; return Math.sin(la) * sun.sd + Math.cos(la) * sun.cd * Math.cos((sun.h0 + lon) * Math.PI / 180); };
+  const dayW = (c) => { const t = Math.max(0, Math.min(1, (c - 0.06) / 0.2)); return t * t * (3 - 2 * t); };   // ดวงอาทิตย์สูงราว 3-15 องศา ค่อย ๆ เปลี่ยน
+
+  // tile เมฆโปร่งแสงที่แปลงแล้ว เก็บไว้ใช้ซ้ำ (ชั้นเมฆช่วงคาดการณ์ทุกชั้นใช้ภาพต้นทางเดียวกัน)
+  const srcCache = new Map();
+  function cloudTile(time, z, x, y) {
+    const n = 1 << z; x = ((x % n) + n) % n;
+    if (y < 0 || y >= n || z > MAX_Z) return Promise.resolve(null);
+    const key = `${time}/${z}/${x}/${y}`;
+    if (srcCache.has(key)) return srcCache.get(key);
+    if (srcCache.size > 600) srcCache.clear();
+    const pr = (async () => {
+      const lonOf = (px) => ((x * 256 + px) / (256 * n)) * 360 - 180;
+      const latOf = (py) => Math.atan(Math.sinh(Math.PI * (1 - (2 * (y * 256 + py)) / (256 * n)))) * 180 / Math.PI;
+      const sun = sunAt(time === 'default' ? Date.now() - 20 * 60000 : Date.parse(time));
+      // มีส่วนไหนของ tile เป็นกลางวันบ้าง (ตรวจตาราง 9x9 จุด)
+      let maxC = -1;
+      for (let j = 0; j <= 8; j++) for (let i = 0; i <= 8; i++) maxC = Math.max(maxC, cosZen(sun, latOf(j * 32), lonOf(i * 32)));
+      const sh = Math.max(0, z - IR.z);
+      const [ir, vis] = await Promise.all([
+        raw(IR, time, z - sh, x >> sh, y >> sh),
+        dayW(maxC) > 0 ? raw(VIS, time, z, x, y) : null,
+      ]);
+      if (!ir && !vis) return null;
+      const im = new ImageData(256, 256), d = im.data, ox = (x & ((1 << sh) - 1)) * (256 >> sh), oy = (y & ((1 << sh) - 1)) * (256 >> sh);
+      for (let py = 0; py < 256; py++) {
+        const lat = latOf(py + 0.5);
+        for (let px = 0; px < 256; px++) {
+          const q = (py * 256 + px) * 4;
+          let a = 0;
+          if (ir) {
+            const p = (((oy + (py >> sh)) * 256) + ox + (px >> sh)) * 4, r = ir[p], g = ir[p + 1], b = ir[p + 2];
+            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) a = Math.pow(Math.max(0, Math.min(1, (r - 122) / 68)), 1.4) * 0.9;   // ทะเล/พื้นดินอุ่น ~100-115, เมฆต่ำ ~120-140, เมฆกลาง-สูง 150+
+            else a = 0.94;                                                                                                       // ยอดเมฆเย็นจัด = เมฆหนา
+          }
+          if (vis) {
+            const c = cosZen(sun, lat, lonOf(px + 0.5)), w = dayW(c);
+            if (w > 0) {
+              const refl = vis[q] / Math.max(0.25, c);                // ชดเชยแสงอ่อนตอนเช้า/เย็น พื้นดิน ~20-60 ทะเล ~10 เมฆ 80+
+              const av = Math.pow(Math.max(0, Math.min(1, (refl - 50) / 90)), 0.85) * 0.92;
+              a = Math.max(a, av * w);
+            }
+          }
+          d[q] = 245; d[q + 1] = 247; d[q + 2] = 250; d[q + 3] = Math.round(a * 250);
+        }
+      }
+      return im;
+    })();
     srcCache.set(key, pr);
     pr.then((im) => { if (!im) srcCache.delete(key); });
     return pr;
@@ -77,10 +131,10 @@ window.RainLayers = (() => {
   }
 
   const CloudLayer = L.GridLayer.extend({
-    options: { pane: 'cloudPane', maxNativeZoom: 6, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles', shift: null },
+    options: { pane: 'cloudPane', maxNativeZoom: MAX_Z, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles', shift: null },
     _time: 'default',
     setTime(t) { t = t || 'default'; if (t === this._time) return; this._time = t; if (this._map) this.redraw(); },
-    // ภาพต้นทางละเอียดประมาณ 2 กม. ต่อจุด (ซูม 6) ซูมเข้ากว่านั้นจะเห็นเป็นบล็อก จึงเกลี่ยทั้งชั้นด้วย blur ตามระดับซูม
+    // ภาพต้นทางละเอียดสุดประมาณ 1 กม. ต่อจุด (ซูม 7) ซูมเข้ากว่านั้นจะเห็นเป็นบล็อก จึงเกลี่ยทั้งชั้นด้วย blur ตามระดับซูม
     _smooth() {
       const c = this.getContainer(); if (!c || !this._map) return;
       const over = this._map.getZoom() - this.options.maxNativeZoom;

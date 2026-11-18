@@ -343,11 +343,43 @@
     }
     return h;
   }
+  // จุดตำแหน่ง: วงกลมสีฟ้า + ลูกศรเล็กบอกทิศที่หันหน้า (เฉพาะเครื่องที่มีเข็มทิศ เช่น มือถือ)
+  const LOC_ICON = L.divIcon({
+    className: 'loc-dot', iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -10],
+    html: '<div class="loc-hd" hidden><svg viewBox="0 0 44 44" width="44" height="44" aria-hidden="true"><path d="M22 2.5 28.5 12.5 22 10.5 15.5 12.5Z" fill="#1f6feb" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></div><span class="loc-pt"></span>',
+  });
+  // ทิศจากเข็มทิศ: iPhone ใช้ webkitCompassHeading (ต้องขออนุญาตตอนกดปุ่ม), Android ใช้ deviceorientationabsolute (alpha นับทวนเข็ม)
+  const heading = { on: false, deg: null, cur: 0, raf: 0 };
+  function onOrient(e) {
+    let h = null;
+    if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) h = e.webkitCompassHeading;
+    else if ((e.absolute || e.type === 'deviceorientationabsolute') && typeof e.alpha === 'number') h = 360 - e.alpha;
+    if (h === null) return;
+    const turn = (screen.orientation && screen.orientation.angle) || window.orientation || 0;   // จอหมุนแนวนอน
+    heading.deg = (h + turn + 360) % 360;
+    if (!heading.raf) heading.raf = requestAnimationFrame(drawHeading);
+  }
+  function drawHeading() {
+    heading.raf = 0;
+    const el = loc.marker && loc.marker.getElement(), hd = el && el.querySelector('.loc-hd');
+    if (!hd || heading.deg === null) return;
+    heading.cur += ((((heading.deg - heading.cur) % 360) + 540) % 360) - 180;   // หมุนทางสั้น ไม่วนรอบตอนข้าม 0/360
+    hd.hidden = false;
+    hd.style.transform = `rotate(${heading.cur.toFixed(1)}deg)`;
+  }
+  function startHeading() {
+    if (heading.on || !window.DeviceOrientationEvent) return;
+    // ฟังไว้เลย (ไม่ได้สิทธิ์ก็แค่ไม่มีค่าส่งมา) แล้วค่อยขอสิทธิ์ ซึ่ง iPhone ต้องขอถึงจะเริ่มส่งค่า
+    heading.on = true;
+    window.addEventListener('ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation', onOrient);
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') DeviceOrientationEvent.requestPermission().catch(() => {});
+  }
   map.on('locationfound', (e) => {
     loc.latlng = e.latlng;
     if (!loc.marker) {
       loc.circle = L.circle(e.latlng, { radius: e.accuracy, color: '#1f6feb', weight: 1, fillOpacity: 0.08, interactive: false }).addTo(map);
-      loc.marker = L.circleMarker(e.latlng, { radius: 8, color: '#fff', weight: 3, fillColor: '#1f6feb', fillOpacity: 1 }).addTo(map).bindPopup(locInfo, { autoPan: false });
+      loc.marker = L.marker(e.latlng, { icon: LOC_ICON, keyboard: false, zIndexOffset: 1000 }).addTo(map).bindPopup(locInfo, { autoPan: false });
+      drawHeading();
     } else { loc.marker.setLatLng(e.latlng); loc.circle.setLatLng(e.latlng).setRadius(e.accuracy); }
     map.setView(e.latlng, Math.max(map.getZoom(), 8));
     loc.marker.openPopup();
@@ -368,6 +400,7 @@
         L.DomEvent.stop(ev);
         if (!navigator.geolocation) { toast('browser นี้ไม่รองรับการหาตำแหน่ง'); return; }
         a.classList.add('busy');
+        startHeading();   // ต้องเรียกตอนผู้ใช้กดปุ่ม iPhone ถึงจะยอมถามสิทธิ์เข็มทิศ
         map.locate({ setView: false, enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
       });
       return d;
