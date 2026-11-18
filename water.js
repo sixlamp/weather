@@ -2,14 +2,18 @@
    ข้อมูล: data/water/*.json (fetch_water.py ดึงจากระบบสมดุลน้ำ กรมชลประทาน ทุก 6 ชม.)
    ขอบลุ่มน้ำ: water_basins.png (tools/build_basins.py) ค่าพิกเซล = รหัสลุ่มน้ำ บนกริด 0.01 องศา
    ลุ่มน้ำ: สีพื้นเข้มตามฝน 24 ชม. เฉลี่ยในลุ่ม (แทนแท่งทรงกระบอกของต้นทาง) ป้ายชื่อเป็นสีตามสถานะระดับน้ำในลำน้ำ
-   อ่าง: ป้าย % ความจุ สีตามช่วงของ ชป. (SWOC) */
+   อ่าง: ป้าย % ความจุ สีตามช่วงของ ชป. (SWOC)
+   แม่น้ำ: water_rivers.json (tools/build_rivers.py จาก OpenStreetMap) แสดงทั้ง 2 โหมด
+   ฝนล่าสุดจากเรดาร์และเมฆจากดาวเทียม (ชุดเดียวกับหน้าอากาศวันนี้) app.js เป็นคนวาด ผ่าน ui.wx() */
 window.RainWater = function (map, ui) {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const num = (v, d = 0) => (v == null ? '-' : Number(v).toLocaleString('th-TH', { minimumFractionDigits: d, maximumFractionDigits: d }));
-  map.createPane('waterPane').style.zIndex = 420;          // ใต้เส้นเขตแดน (460) และชื่อ (470)
+  map.createPane('waterPane').style.zIndex = 350;          // เหนือเมฆ (300) ใต้ภาพฝน (400) เส้นเขตแดน (460) และชื่อ (470)
   map.getPane('waterPane').style.pointerEvents = 'none';
   map.createPane('waterMarkPane').style.zIndex = 480;      // ป้ายลุ่มน้ำ/อ่าง อยู่เหนือชื่อเมือง
+  map.createPane('riverPane').style.zIndex = 440;          // แม่น้ำอยู่เหนือภาพฝน จะได้เห็นว่าฝนตกตรงลำน้ำไหน
+  const riverRenderer = L.canvas({ pane: 'riverPane', tolerance: 8 });
 
   // สถานะระดับน้ำในลำน้ำ (ระดับของสถานีเทียบตลิ่ง ตามเกณฑ์ของ ThaiWater)
   const LV = {
@@ -41,6 +45,10 @@ window.RainWater = function (map, ui) {
 
   const st = { mode: 'basin', on: false, basins: null, dams: null, loadedAt: 0, ids: null, G: null, overlay: null, imgKey: '', marks: L.layerGroup(), dark: true, loading: null };
   try { const m = localStorage.getItem('rainmap.water'); if (m === 'dam' || m === 'basin') st.mode = m; } catch (e) { /* ใช้ค่าเริ่มต้น */ }
+  // ชั้นเสริมของหน้านี้ เปิดไว้ตั้งแต่แรก: เห็นทันทีว่าลุ่ม/อ่างไหนกำลังมีฝน (แยกจากปุ่มของหน้าอากาศวันนี้)
+  const lay = { rain: true, cloud: true, river: true };
+  try { Object.assign(lay, JSON.parse(localStorage.getItem('rainmap.waterLayers') || '{}')); } catch (e) { /* ใช้ค่าเริ่มต้น */ }
+  const rv = { data: null, group: L.layerGroup(), key: '', loading: null };
 
   async function getJson(u) { const r = await fetch(u + '?t=' + Date.now()); if (!r.ok) throw new Error(u + ' ' + r.status); return r.json(); }
   function loadIds() {
@@ -164,13 +172,60 @@ window.RainWater = function (map, ui) {
     declutter();
   }
 
+  // ---------- แม่น้ำ ----------
+  function loadRivers() {
+    if (!rv.loading) rv.loading = getJson('water_rivers.json').then((d) => { rv.data = d; }).catch((e) => { rv.loading = null; throw e; });
+    return rv.loading;
+  }
+  const RW = [0, 1, 1.7, 2.6];        // ความหนาตามขนาดแม่น้ำ (1 สายรอง .. 3 สายหลัก)
+  function drawRivers() {
+    if (!st.on || !lay.river) { if (map.hasLayer(rv.group)) map.removeLayer(rv.group); return; }
+    if (!rv.data) { loadRivers().then(drawRivers).catch(() => { /* ไม่มีเส้นแม่น้ำก็ใช้หน้านี้ได้ */ }); return; }
+    const z = map.getZoom(), f = z >= 9 ? 1.8 : z >= 8 ? 1.4 : z >= 7 ? 1.15 : 1;
+    const key = st.dark + ':' + f;
+    if (key !== rv.key) {
+      rv.key = key; rv.group.clearLayers();
+      const col = st.dark ? '#9ee9ff' : '#0b5cad', halo = st.dark ? 'rgba(10,20,40,.55)' : 'rgba(255,255,255,.8)';
+      for (const r of rv.data.rivers) {
+        const ll = r.l.map((line) => line.map((p) => [p[1], p[0]]));
+        L.polyline(ll, { renderer: riverRenderer, color: halo, weight: RW[r.w] * f + 2, opacity: 1, interactive: false }).addTo(rv.group);
+      }
+      for (const r of rv.data.rivers) {
+        const ll = r.l.map((line) => line.map((p) => [p[1], p[0]]));
+        L.polyline(ll, { renderer: riverRenderer, color: col, weight: RW[r.w] * f, opacity: 0.95 })
+          .bindPopup(`<b>${esc(r.n)}</b><br><span class="small">ความยาวในไทยประมาณ ${num(r.km)} กม. (จาก OpenStreetMap)</span>`, { maxWidth: 240 })
+          .addTo(rv.group);
+      }
+    }
+    if (!map.hasLayer(rv.group)) rv.group.addTo(map);
+  }
+  map.on('zoomend', () => { if (st.on) drawRivers(); });
+
+  function layerButtons() {
+    document.querySelectorAll('#waterLayers button').forEach((b) => b.classList.toggle('active', !!lay[b.dataset.w]));
+  }
+  document.querySelectorAll('#waterLayers button').forEach((b) => {
+    b.onclick = () => {
+      lay[b.dataset.w] = !lay[b.dataset.w];
+      try { localStorage.setItem('rainmap.waterLayers', JSON.stringify(lay)); } catch (e) { /* ข้ามได้ */ }
+      layerButtons(); drawRivers(); ui.wx(); legendNow(); ui.credits();
+    };
+  });
+
   function legendNow() {
     if (st.mode === 'basin') {
       const chips = [5, 4, 3, 2, 1].map((k) => `<span class="wl-chip" style="background:${LV[k].col}">${LV[k].name}</span>`).join(' ');
-      ui.legend('ฝน 24 ชม. เฉลี่ยในลุ่ม (มม.)', RAIN_LV, RAIN_COL, '', `สีป้ายชื่อ = ระดับน้ำในลำน้ำ (สถานีที่สูงที่สุดในลุ่มเทียบตลิ่ง):<br>${chips}<br>แตะป้ายชื่อหรือจุดเพื่อดูรายละเอียด`);
+      ui.legend('ฝน 24 ชม. เฉลี่ยในลุ่ม (มม.)', RAIN_LV, RAIN_COL, '', `สีป้ายชื่อ = ระดับน้ำในลำน้ำ (สถานีที่สูงที่สุดในลุ่มเทียบตลิ่ง):<br>${chips}${extraNote()}<br>แตะป้ายชื่อหรือจุดเพื่อดูรายละเอียด`);
     } else {
-      ui.legendRows('อ่างเก็บน้ำขนาดใหญ่ (% ความจุ)', BAND.map((b) => [b.col, `${b.short} ${b.name}`]), `${st.dams ? st.dams.items.length : ''} อ่าง | % ของความจุที่ระดับเก็บกักปกติ ตามช่วงของ ชป. (SWOC) | แตะป้ายเพื่อดูรายละเอียด`);
+      ui.legendRows('อ่างเก็บน้ำขนาดใหญ่ (% ความจุ)', BAND.map((b) => [b.col, `${b.short} ${b.name}`]), `${st.dams ? st.dams.items.length : ''} อ่าง | % ของความจุที่ระดับเก็บกักปกติ ตามช่วงของ ชป. (SWOC)${extraNote()}<br>แตะป้ายเพื่อดูรายละเอียด`);
     }
+  }
+  function extraNote() {
+    const t = [];
+    if (lay.rain) t.push('ฝนตอนนี้ = ภาพเรดาร์ล่าสุด (สีเดียวกับหน้าอากาศวันนี้)');
+    if (lay.cloud) t.push('สีขาว = เมฆจากดาวเทียม');
+    if (lay.river) t.push('เส้นฟ้า = แม่น้ำสายหลัก แตะเพื่อดูชื่อ');
+    return t.length ? '<br>' + t.join(' | ') : '';
   }
   function header() {
     document.querySelectorAll('#waterMode button').forEach((b) => b.classList.toggle('active', b.dataset.m === st.mode));
@@ -186,6 +241,7 @@ window.RainWater = function (map, ui) {
     header();
     if (!st.basins) return;
     drawBasins(st.mode === 'basin');
+    drawRivers();
     drawMarks();
     legendNow();
     ui.credits();
@@ -201,7 +257,7 @@ window.RainWater = function (map, ui) {
 
   return {
     enter() {
-      st.on = true; header();
+      st.on = true; header(); layerButtons(); drawRivers();
       if (!st.basins || Date.now() - st.loadedAt > 30 * 60e3) {
         load().then(() => { st.err = null; render(); }).catch((e) => { st.err = e.message; header(); });
       }
@@ -211,9 +267,12 @@ window.RainWater = function (map, ui) {
       st.on = false; map.closePopup();
       if (st.overlay && map.hasLayer(st.overlay)) map.removeLayer(st.overlay);
       if (map.hasLayer(st.marks)) map.removeLayer(st.marks);
+      if (map.hasLayer(rv.group)) map.removeLayer(rv.group);
     },
+    layers: () => lay,
     setDark(v) { st.dark = v; if (st.on) render(); },
     when: () => (st.basins ? (st.mode === 'basin' ? st.basins.made : st.dams.fetched) : null),
-    source: () => 'ข้อมูลน้ำ: คลังข้อมูลน้ำแห่งชาติ (ThaiWater) สสน. และหน่วยงานเจ้าของสถานี/อ่าง ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง) | ขอบลุ่มน้ำประมาณจาก HydroBASINS',
+    source: () => 'ข้อมูลน้ำ: คลังข้อมูลน้ำแห่งชาติ (ThaiWater) สสน. และหน่วยงานเจ้าของสถานี/อ่าง ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง) | ขอบลุ่มน้ำประมาณจาก HydroBASINS'
+      + (lay.river ? ' | แม่น้ำ: © OpenStreetMap contributors' : ''),
   };
 };

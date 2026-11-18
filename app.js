@@ -729,15 +729,27 @@
   }
 
   function cloudPreload() { if (layersOn.cloud && page === 'now' && now.frames.length) cloud.preload([...new Set(now.frames.map(cloudKey))]); }
+  // หน้าชลประทาน: ภาพฝนล่าสุดจากเรดาร์ (ภาพเดียว) และเมฆดาวเทียมล่าสุด ใช้แหล่งเดียวกับหน้าอากาศวันนี้
+  let waterRainTimer = 0;
+  function waterRain() {
+    clearTimeout(waterRainTimer);
+    if (page !== 'water' || !water.layers().rain) return;
+    const url = now.urls[now.obsLast];
+    if (url && now.bounds) { showImage(url, now.bounds, 0.85); return; }
+    if (!now.error) waterRainTimer = setTimeout(waterRain, 1000);     // ภาพยังไม่พร้อม รอสักครู่
+  }
   function applyLayers() {
-    const fieldOn = layersOn.rain && page !== 'water';
+    const wl = page === 'water' ? water.layers() : null;
+    const fieldOn = wl ? wl.rain : layersOn.rain;
     if (fieldOn) { if (!map.hasLayer(rainGroup)) rainGroup.addTo(map); } else if (map.hasLayer(rainGroup)) map.removeLayer(rainGroup);
     const cloudOn = layersOn.cloud && page === 'now';
     if (cloudOn) {
       const f = now.frames[now.cur];
       cloud.show(f ? cloudKey(f) : 'default');
       cloudPreload();
-    } else cloud.hide();
+    } else if (wl && wl.cloud) cloud.show(RL.cloudTime(now.latest || new Date().toISOString()));
+    else cloud.hide();
+    if (wl) waterRain();
     tnowShow();
     fcCloudShow();
     cityTemps();
@@ -872,7 +884,9 @@
       if (wnowOn()) src += ' | ลม: NOAA GFS';
       when = now.latest;
     } else if (page === 'water') {
-      src = water.source(); when = water.when();
+      const wl = water.layers();
+      src = water.source() + (wl.rain ? ' | ฝนตอนนี้: ' + (nowSrc === 'region' ? 'RainViewer' : 'เรดาร์กรมอุตุนิยมวิทยา') : '') + (wl.cloud ? ' | เมฆ: Himawari ผ่าน NASA GIBS' : '');
+      when = water.when();
     } else {
       src = 'NOAA GFS' + (fc.meta && fc.meta.provider === 'rid' ? ' ผ่านระบบสมดุลน้ำ (ทดลอง)' : '');
       when = fc.meta ? fc.meta.init : null;
@@ -882,7 +896,7 @@
   }
 
   // ---------- หน้าชลประทาน (water.js) ----------
-  const water = window.RainWater(map, { legend, legendRows, credits: () => credits() });
+  const water = window.RainWater(map, { legend, legendRows, credits: () => credits(), wx: () => applyLayers() });
 
   // ---------- สลับหน้า ----------
   let page = 'now';
@@ -894,7 +908,7 @@
     fitThailandOnce(p);   // เปิดหน้าไหนครั้งแรก ให้เห็นประเทศไทยพอดี หลังจากนั้นไม่ยุ่งกับมุมมองของผู้ใช้
     credits();
     applyLayers();
-    if (p === 'water') water.enter(); else water.leave();
+    if (p === 'water') { water.enter(); loadNow(); waterRain(); } else water.leave();
     if (p === 'now') { nowHeader(); nowLegend(); nowRender(); loadNow(); }
     else if (p === 'fc' && fc.meta) fcShow();
     location.hash = p;
